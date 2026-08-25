@@ -172,12 +172,9 @@ LIGHT_MAP = {
 }
 
 def get_lab_from_r(r_array, light_name="D65"):
-    # 🌟 31개 또는 35개 데이터 길이에 상관없이 동적으로 밴드(파장 대역) 맞추기
     num_points = len(r_array)
     start_wl = 360 if num_points == 35 else 400
-    
     shape_target = colour.SpectralShape(start_wl, start_wl + (num_points - 1) * 10, 10)
-    cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_target)
     
     light_data = LIGHT_MAP.get(light_name, LIGHT_MAP["D65"])
     W_X = light_data[0].copy().align(shape_target).values
@@ -192,19 +189,14 @@ def get_lab_from_r(r_array, light_name="D65"):
 
 def get_preview_hex(target_r_array, light_name="D65"):
     shape_10nm = colour.SpectralShape(400, 700, 10)
-    cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_10nm)
-    cmfs_values = cmfs.values
-    
     light_data = LIGHT_MAP.get(light_name, LIGHT_MAP["D65"])
     W_X = light_data[0].copy().align(shape_10nm).values
     W_Y = light_data[1].copy().align(shape_10nm).values
     W_Z = light_data[2].copy().align(shape_10nm).values
     W = np.column_stack((W_X, W_Y, W_Z))
-        
     wp_XYZ = np.sum(W, axis=0)
     wp_xy = colour.XYZ_to_xy(wp_XYZ)
     XYZ_tgt = np.dot(target_r_array, W)
-    
     RGB_viz = colour.XYZ_to_sRGB(XYZ_tgt, illuminant=wp_xy)
     RGB_viz = np.clip(RGB_viz, 0, 1)
     return "#{:02x}{:02x}{:02x}".format(int(RGB_viz[0]*255), int(RGB_viz[1]*255), int(RGB_viz[2]*255)), [int(RGB_viz[0]*255), int(RGB_viz[1]*255), int(RGB_viz[2]*255)]
@@ -317,6 +309,7 @@ def parse_qtx_content(content):
             else: batches.append(data_dict)
     return standards, batches
 
+# 🌟 최적화 연산 함수: 안정적인 가중치 적용 및 예외 처리
 def calculate_advanced_correction(std_ks, bat_ks_list, bat_expected_recipes, bat_actual_recipes, blank_ks_arr, dye_interpolators, mode):
     num_dyes = len(dye_interpolators)
     
@@ -329,6 +322,7 @@ def calculate_advanced_correction(std_ks, bat_ks_list, bat_expected_recipes, bat
             total_error += np.sum((bat_ks - est_ks)**2)
         return total_error
 
+    # 발색 계수(CF) 탐색 (0.5 ~ 1.5 범위)
     res_cf = minimize(cf_objective, np.ones(num_dyes), bounds=[(0.5, 1.5) for _ in range(num_dyes)], method='SLSQP')
     optimal_cf = res_cf.x if res_cf.success else np.ones(num_dyes)
     
@@ -363,147 +357,158 @@ bat_expected_recipes = []
 bat_actual_recipes = []
 selected_light = "D65"
 
-# --- 왼쪽 컬럼 (입력부) ---
+# --- 왼쪽 컬럼 (입력부: Form 적용으로 값 누락 원천 차단) ---
 with col_input:
     st.markdown("### 1. 데이터 업로드 및 광원 선택")
     uploaded_file = st.file_uploader("QTX 파일 업로드 (STD & BAT 포함)", type=['qtx'])
     selected_light = st.selectbox("보정 기준 광원 선택", options=list(LIGHT_MAP.keys()), index=0)
     
     st.markdown("### 2. 레시피 대조 입력")
-    if uploaded_file and len(st.session_state.selected_dyes) > 0:
-        content = uploaded_file.getvalue().decode('euc-kr', errors='ignore')
-        standards, batches = parse_qtx_content(content)
+    
+    # 🌟 Form을 사용하여 입력값을 완벽하게 고정 및 동기화
+    with st.form("recipe_input_form"):
+        edited_df_result = None
+        selected_bat_names = []
         
-        if not standards:
-            st.error("QTX 파일에 STANDARD 데이터가 없습니다.")
-        elif not batches:
-            st.error("QTX 파일에 BATCH 데이터가 없습니다.")
-        else:
-            std_data = standards[0]
-            st.success(f"타겟(STD) 인식 완료: **{std_data['name']}**")
+        if uploaded_file and len(st.session_state.selected_dyes) > 0:
+            content = uploaded_file.getvalue().decode('euc-kr', errors='ignore')
+            standards, batches = parse_qtx_content(content)
             
-            all_bat_names = [b['name'] for b in batches]
-            selected_bat_names = st.multiselect("분석에 사용할 BAT 데이터를 선택하세요", options=all_bat_names, default=all_bat_names)
-            active_batches = [b for b in batches if b['name'] in selected_bat_names]
-            
-            if len(active_batches) > 0:
-                selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
-                selected_display_names = [display_name_dict.get(d, d) for d in selected_raw_dyes]
-                
-                col_names = ["[STD] Datacolor 예상 처방"] + [f"[BAT] {b['name']} 실제 투입량" for b in active_batches]
-                df_input = pd.DataFrame(0.0, index=selected_display_names, columns=col_names)
-                
-                table_key = f"adv_table_{'-'.join(selected_raw_dyes)}_{'-'.join(col_names)}"
-                
-                unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                st.markdown(f"**Datacolor 예상 처방과 실제 현장 투입량({unit_label})을 입력하세요:**")
-                
-                edited_df = st.data_editor(df_input, use_container_width=True, key=table_key)
-                edited_df = edited_df.fillna(0.0)
-                
-                # 🌟 데이터 추출 안전장치 추가
-                std_initial_recipe = [float(val) for val in edited_df.iloc[:, 0].tolist()]
-                bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
-                
-                # 각 배치별 실제 투입량 행렬을 숫자로 명확하게 변환
-                bat_actual_recipes = []
-                for col_idx in range(1, edited_df.shape[1]):
-                    col_vals = [float(val) for val in edited_df.iloc[:, col_idx].tolist()]
-                    bat_actual_recipes.append(col_vals)
-                
-                run_calc = st.button("🚀 정밀 보정 계산 시작", type="primary", use_container_width=True)
+            if not standards:
+                st.error("QTX 파일에 STANDARD 데이터가 없습니다.")
+            elif not batches:
+                st.error("QTX 파일에 BATCH 데이터가 없습니다.")
             else:
-                st.warning("분석에 사용할 BAT 데이터를 최소 1개 이상 선택해 주세요.")
+                std_data = standards[0]
+                st.success(f"타겟(STD) 인식 완료: **{std_data['name']}**")
                 
-    elif uploaded_file and len(st.session_state.selected_dyes) == 0:
-        st.info("👈 좌측 사이드바에서 보정에 사용할 염료를 선택해 주세요.")
-    else:
-        st.info("QTX 파일을 먼저 업로드해 주세요.")
+                all_bat_names = [b['name'] for b in batches]
+                selected_bat_names = st.multiselect("분석에 사용할 BAT 데이터를 선택하세요", options=all_bat_names, default=all_bat_names)
+                active_batches_form = [b for b in batches if b['name'] in selected_bat_names]
+                
+                if len(active_batches_form) > 0:
+                    selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
+                    selected_display_names = [display_name_dict.get(d, d) for d in selected_raw_dyes]
+                    
+                    col_names = ["[STD] Datacolor 예상 처방"] + [f"[BAT] {b['name']} 실제 투입량" for b in active_batches_form]
+                    df_input = pd.DataFrame(0.0, index=selected_display_names, columns=col_names)
+                    
+                    table_key = f"adv_table_form_{'-'.join(selected_raw_dyes)}"
+                    unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
+                    st.markdown(f"**Datacolor 예상 처방과 실제 현장 투입량({unit_label})을 입력하세요:**")
+                    
+                    edited_df_result = st.data_editor(df_input, use_container_width=True, key=table_key)
+                    
+        elif uploaded_file and len(st.session_state.selected_dyes) == 0:
+            st.info("👈 좌측 사이드바에서 보정에 사용할 염료를 선택해 주세요.")
+        else:
+            st.info("QTX 파일을 먼저 업로드해 주세요.")
+            
+        # Form 제출 버튼 (이 버튼을 누르는 순간 모든 입력값이 확실하게 전달됨)
+        run_calc = st.form_submit_button("🚀 정밀 보정 계산 시작", type="primary", use_container_width=True)
 
 # --- 오른쪽 컬럼 (결과부) ---
 with col_result:
     st.markdown("### 3. 정밀 분석 및 보정 결과")
     
-    # 🌟 안전하게 변수 존재 여부를 먼저 체크하도록 수정
-    if uploaded_file is not None and 'standards' in locals() and 'batches' in locals() and standards and batches:
-        std_lab = get_lab_from_r(std_data['r_35'], selected_light)
-        de_records = []
-        for b in active_batches:
-            bat_lab = get_lab_from_r(b['r_35'], selected_light)
-            de_val = colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1)
-            de_records.append({
-                "배치(BAT) 명칭": b['name'],
-                f"dE (CMC) [{selected_light}]": round(de_val, 2)
-            })
-        
-        with st.container(border=True):
-            st.markdown(f"#### 📊 타겟(STD) 대비 배치(BAT) 색차 분석")
-            st.dataframe(pd.DataFrame(de_records), hide_index=True, use_container_width=True)
-
-    if run_calc and 'std_data' in locals() and std_data is not None and len(active_batches) > 0:
-        with st.spinner("발색 경향성 분석 및 처방 최적화 중..."):
-            dye_interpolators = []
-            for dye_name in selected_raw_dyes:
-                conc_data = dye_db[dye_name]
-                concs = sorted([float(k) for k in conc_data.keys() if float(k) > 0])
-                concs_array = np.array([0.0] + concs)
-                
-                ks_matrix = [np.zeros(31)]
-                for c in concs:
-                    c_key = [k for k in conc_data.keys() if float(k) == c][0]
-                    ks_net = np.maximum(get_ks_normalized(conc_data[c_key]) - blank_ks, 0)
-                    ks_matrix.append(ks_net)
-                dye_interpolators.append(PchipInterpolator(concs_array, np.array(ks_matrix), axis=0))
-            
-            # 🌟 수정: 입력 표에서 배치별 실제 투입량 데이터가 빠짐없이 들어가도록 명확히 추출
-            bat_ks_list = [b['ks_31'] for b in active_batches]
-            
-            # edited_df의 1열(인덱스 1)부터 끝까지가 각 배치별 실제 투입량입니다.
-            bat_actual_recipes = edited_df.iloc[:, 1:].T.values.tolist()
-            bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
-
-            result = calculate_advanced_correction(
-                std_data['ks_31'], bat_ks_list, bat_expected_recipes, bat_actual_recipes, 
-                blank_ks, dye_interpolators, st.session_state.dye_mode
-            )
-            
-            if result['success']:
-                with st.container(border=True):
-                    st.markdown(f"#### 1. 광원 [{selected_light}] 기준 현장 염료 발색 상태 (Calibration Factor)")
-                    cf_data = {display_name_dict.get(dye, dye): f"{cf*100:.1f}%" for dye, cf in zip(selected_raw_dyes, result['calibration_factors'])}
-                    st.json(cf_data)
-                
-                with st.container(border=True):
-                    unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                    st.markdown(f"#### 2. 🎯 타겟(STD) 매칭을 위한 최종 추천 처방 ({unit_label})")
-                    
-                    final_recipe = result['final_recipe']
-                    delta_recipe = [final - initial for final, initial in zip(final_recipe, std_initial_recipe)]
-                    
-                    recipe_df = pd.DataFrame({
-                        "염료명": selected_display_names,
-                        f"Datacolor 예상 처방 ({unit_label})": [round(c, 4) for c in std_initial_recipe],
-                        f"최종 보정 추천 처방 ({unit_label})": [round(c, 4) for c in final_recipe],
-                        f"증감량 (Add/Reduce) ({unit_label})": [round(d, 4) for d in delta_recipe]
+    if uploaded_file is not None:
+        try:
+            content_res = uploaded_file.getvalue().decode('euc-kr', errors='ignore')
+            standards_res, batches_res = parse_qtx_content(content_res)
+            if standards_res and batches_res:
+                std_data_res = standards_res[0]
+                std_lab = get_lab_from_r(std_data_res['r_35'], selected_light)
+                de_records = []
+                for b in batches_res:
+                    bat_lab = get_lab_from_r(b['r_35'], selected_light)
+                    de_val = colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1)
+                    de_records.append({
+                        "배치(BAT) 명칭": b['name'],
+                        f"dE (CMC) [{selected_light}]": round(de_val, 2)
                     })
+                
+                with st.container(border=True):
+                    st.markdown(f"#### 📊 타겟(STD) 대비 배치(BAT) 색차 분석")
+                    st.dataframe(pd.DataFrame(de_records), hide_index=True, use_container_width=True)
+        except Exception:
+            pass
+
+    if run_calc and edited_df_result is not None:
+        content = uploaded_file.getvalue().decode('euc-kr', errors='ignore')
+        standards, batches = parse_qtx_content(content)
+        std_data = standards[0]
+        active_batches = [b for b in batches if b['name'] in selected_bat_names]
+        
+        if len(active_batches) > 0:
+            edited_df_result = edited_df_result.fillna(0.0)
+            std_initial_recipe = [float(val) for val in edited_df_result.iloc[:, 0].tolist()]
+            bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
+            
+            bat_actual_recipes = []
+            for col_idx in range(1, edited_df_result.shape[1]):
+                col_vals = [float(val) for val in edited_df_result.iloc[:, col_idx].tolist()]
+                bat_actual_recipes.append(col_vals)
+                
+            with st.spinner("발색 경향성 분석 및 처방 최적화 중..."):
+                dye_interpolators = []
+                for dye_name in selected_raw_dyes:
+                    conc_data = dye_db[dye_name]
+                    concs = sorted([float(k) for k in conc_data.keys() if float(k) > 0])
+                    concs_array = np.array([0.0] + concs)
                     
-                    def color_delta(val): 
-                        return f"color: {'#d32f2f' if val > 0 else ('#1976d2' if val < 0 else 'black')}; font-weight: bold;"
+                    ks_matrix = [np.zeros(31)]
+                    for c in concs:
+                        c_key = [k for k in conc_data.keys() if float(k) == c][0]
+                        ks_net = np.maximum(get_ks_normalized(conc_data[c_key]) - blank_ks, 0)
+                        ks_matrix.append(ks_net)
+                    dye_interpolators.append(PchipInterpolator(concs_array, np.array(ks_matrix), axis=0))
+                
+                bat_ks_list = [b['ks_31'] for b in active_batches]
+                
+                result = calculate_advanced_correction(
+                    std_data['ks_31'], bat_ks_list, bat_expected_recipes, bat_actual_recipes, 
+                    blank_ks, dye_interpolators, st.session_state.dye_mode
+                )
+                
+                if result['success']:
+                    with st.container(border=True):
+                        st.markdown(f"#### 1. 광원 [{selected_light}] 기준 현장 염료 발색 상태 (Calibration Factor)")
+                        cf_data = {display_name_dict.get(dye, dye): f"{cf*100:.1f}%" for dye, cf in zip(selected_raw_dyes, result['calibration_factors'])}
+                        st.json(cf_data)
+                    
+                    with st.container(border=True):
+                        unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
+                        st.markdown(f"#### 2. 🎯 타겟(STD) 매칭을 위한 최종 추천 처방 ({unit_label})")
                         
-                    st.dataframe(
-                        recipe_df.style.map(color_delta, subset=[f"증감량 (Add/Reduce) ({unit_label})"])
-                                     .format({
-                                         f"Datacolor 예상 처방 ({unit_label})": "{:.2f}", 
-                                         f"최종 보정 추천 처방 ({unit_label})": "{:.2f}", 
-                                         f"증감량 (Add/Reduce) ({unit_label})": "{:+.2f}"
-                                     }), 
-                        hide_index=True, 
-                        use_container_width=True
-                    )
-            else: 
-                st.error("보정 처방을 산출하는 데 실패했습니다.")
+                        final_recipe = result['final_recipe']
+                        delta_recipe = [final - initial for final, initial in zip(final_recipe, std_initial_recipe)]
+                        
+                        recipe_df = pd.DataFrame({
+                            "염료명": selected_display_names,
+                            f"Datacolor 예상 처방 ({unit_label})": [round(c, 4) for c in std_initial_recipe],
+                            f"최종 보정 추천 처방 ({unit_label})": [round(c, 4) for c in final_recipe],
+                            f"증감량 (Add/Reduce) ({unit_label})": [round(d, 4) for d in delta_recipe]
+                        })
+                        
+                        def color_delta(val): 
+                            return f"color: {'#d32f2f' if val > 0 else ('#1976d2' if val < 0 else 'black')}; font-weight: bold;"
+                            
+                        st.dataframe(
+                            recipe_df.style.map(color_delta, subset=[f"증감량 (Add/Reduce) ({unit_label})"])
+                                         .format({
+                                             f"Datacolor 예상 처방 ({unit_label})": "{:.2f}", 
+                                             f"최종 보정 추천 처방 ({unit_label})": "{:.2f}", 
+                                             f"증감량 (Add/Reduce) ({unit_label})": "{:+.2f}"
+                                         }), 
+                            hide_index=True, 
+                            use_container_width=True
+                        )
+                else: 
+                    st.error("보정 처방을 산출하는 데 실패했습니다.")
+        else:
+            st.warning("분석에 사용할 BAT 데이터를 최소 1개 이상 선택해 주세요.")
     else:
-        if not (run_calc and 'std_data' in locals() and std_data is not None):
+        if not run_calc:
             st.markdown("""
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; color: #999; border: 1px dashed #ccc; border-radius: 10px; background-color: #f8f9fa;">
                 <span class='material-symbols-outlined' style='font-size: 48px;'>science</span>
