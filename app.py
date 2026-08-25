@@ -327,9 +327,9 @@ def calculate_multi_batch_correction(std_ks, bat_ks_list, bat_expected_recipes, 
     }
 
 # ==========================================
-# 4.5 백포 선택 팝업 (Disperse 전용) - 수정됨
+# 4.5 백포 선택 팝업 (Disperse 전용) - 수정 완료
 # ==========================================
-def set_temp_disp(val): 
+def handle_disp_selection(val):
     st.session_state.temp_disp = val
 
 def confirm_disp_action():
@@ -346,13 +346,24 @@ def disperse_dialog():
         
     col1, col2 = st.columns(2)
     with col1: 
-        if st.button("Jersey", use_container_width=True, type="primary" if st.session_state.temp_disp == "Jersey" else "secondary", key="dlg_jersey_btn"):
-            set_temp_disp("Jersey")
-            st.rerun()
+        # on_click 콜백을 사용하여 클릭 이벤트가 확실하게 잡히도록 수정
+        st.button(
+            "Jersey", 
+            use_container_width=True, 
+            type="primary" if st.session_state.temp_disp == "Jersey" else "secondary", 
+            on_click=handle_disp_selection, 
+            args=("Jersey",), 
+            key="dlg_jersey_btn"
+        )
     with col2: 
-        if st.button("Woven", use_container_width=True, type="primary" if st.session_state.temp_disp == "Woven" else "secondary", key="dlg_woven_btn"):
-            set_temp_disp("Woven")
-            st.rerun()
+        st.button(
+            "Woven", 
+            use_container_width=True, 
+            type="primary" if st.session_state.temp_disp == "Woven" else "secondary", 
+            on_click=handle_disp_selection, 
+            args=("Woven",), 
+            key="dlg_woven_btn"
+        )
             
     st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
     if st.button("확인", use_container_width=True, type="primary", key="dlg_confirm_btn"):
