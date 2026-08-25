@@ -131,7 +131,7 @@ dye_db = load_dye_data(st.session_state.dye_mode)
 all_dyes_ordered, display_name_dict, sort_order_dict = load_dye_mapping(st.session_state.dye_mode, dye_db.keys())
 
 # ==========================================
-# 3. 백포 및 색상 계산 로직 (광원 스펙트럼 포함)
+# 3. 백포 및 색상 계산 로직
 # ==========================================
 def get_ks(reflectance): return (1 - reflectance)**2 / (2 * reflectance)
 
@@ -180,13 +180,11 @@ def get_lab_from_r(r_array, light_name="D65"):
     num_points = len(r_array)
     start_wl = 360 if num_points == 35 else 400
     shape_target = colour.SpectralShape(start_wl, start_wl + (num_points - 1) * 10, 10)
-    
     light_data = LIGHT_MAP.get(light_name, LIGHT_MAP["D65"])
     W_X = light_data[0].copy().align(shape_target).values
     W_Y = light_data[1].copy().align(shape_target).values
     W_Z = light_data[2].copy().align(shape_target).values
     W = np.column_stack((W_X, W_Y, W_Z))
-    
     wp_XYZ = np.sum(W, axis=0)
     wp_xy = colour.XYZ_to_xy(wp_XYZ)
     XYZ = np.dot(r_array, W)
@@ -358,7 +356,6 @@ batches = []
 std_data = None
 selected_bat_names = []
 
-# --- 왼쪽 컬럼 (입력부) ---
 with col_input:
     st.markdown("### 1. 데이터 업로드 및 광원 선택")
     uploaded_file = st.file_uploader("QTX 파일 업로드 (STD & BAT 포함)", type=['qtx'])
@@ -390,18 +387,17 @@ with col_input:
                 col_names = ["[STD] Datacolor 예상 처방"] + [f"[BAT] {b_name} 실제 투입량" for b_name in selected_bat_names]
                 df_input = pd.DataFrame(0.0, index=selected_display_names, columns=col_names)
                 
-                table_key = f"multi_table_step_{'-'.join(selected_raw_dyes)}_{'-'.join(selected_bat_names)}"
+                table_key = f"multi_table_debug_{'-'.join(selected_raw_dyes)}_{'-'.join(selected_bat_names)}"
                 unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
                 st.markdown(f"**Datacolor 예상 처방과 각 배치별 실제 현장 투입량({unit_label})을 입력하세요:**")
                 
                 edited_df_result = st.data_editor(df_input, use_container_width=True, key=table_key)
                 
-                # 🌟 단계 1: [입력 완료 및 값 고정] 버튼
                 if st.button("📥 1단계: 입력값 확정 및 저장", type="secondary", use_container_width=True):
                     st.session_state.saved_df = edited_df_result
                     st.session_state.saved_batches = selected_bat_names
                     st.session_state.input_confirmed = True
-                    st.success("입력값이 안전하게 저장되었습니다! 이제 아래 2단계 계산 버튼을 눌러주세요.")
+                    st.success("입력값이 저장되었습니다!")
                 
     elif uploaded_file and len(st.session_state.selected_dyes) == 0:
         st.info("👈 좌측 사이드바에서 보정에 사용할 염료를 선택해 주세요.")
@@ -409,15 +405,10 @@ with col_input:
         st.info("QTX 파일을 먼저 업로드해 주세요.")
         
     st.markdown("---")
-    
-    # 🌟 단계 2: [정밀 보정 계산 시작] 버튼 (입력 완료가 눌렸을 때만 활성화 또는 실행 보장)
     run_calc = st.button("🚀 2단계: 정밀 보정 계산 시작", type="primary", use_container_width=True, disabled=not st.session_state.input_confirmed)
-    if not st.session_state.input_confirmed and uploaded_file and len(st.session_state.selected_dyes) > 0:
-        st.caption("💡 먼저 위쪽의 **[1단계: 입력값 확정 및 저장]** 버튼을 눌러주세요.")
 
-# --- 오른쪽 컬럼 (결과부) ---
 with col_result:
-    st.markdown("### 3. 정밀 분석 및 보정 결과")
+    st.markdown("### 3. 정밀 분석 및 보정 결과 (디버그 진단 모드)")
     
     if uploaded_file is not None:
         try:
@@ -430,10 +421,7 @@ with col_result:
                 for b in batches_res:
                     bat_lab = get_lab_from_r(b['r_35'], selected_light)
                     de_val = colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1)
-                    de_records.append({
-                        "배치(BAT) 명칭": b['name'],
-                        f"dE (CMC) [{selected_light}]": round(de_val, 2)
-                    })
+                    de_records.append({"배치(BAT) 명칭": b['name'], f"dE (CMC) [{selected_light}]": round(de_val, 2)})
                 
                 with st.container(border=True):
                     st.markdown(f"#### 📊 타겟(STD) 대비 전체 배치(BAT) 색차 분석")
@@ -441,7 +429,6 @@ with col_result:
         except Exception:
             pass
 
-    # 2단계 계산 실행부 (확정된 세션 데이터를 기반으로 연산)
     if run_calc and st.session_state.input_confirmed and st.session_state.saved_df is not None:
         content = uploaded_file.getvalue().decode('euc-kr', errors='ignore')
         standards, batches = parse_qtx_content(content)
@@ -452,6 +439,11 @@ with col_result:
         
         if len(active_batches) > 0:
             df_to_use = st.session_state.saved_df.fillna(0.0)
+            
+            # 🌟 [디버그 출력] 화면에 실제로 읽어들인 표 데이터가 무엇인지 강제로 화면에 띄웁니다.
+            st.markdown("#### 🛠️ [디버그] 프로그램이 읽어들인 입력 표 데이터 확인")
+            st.dataframe(df_to_use)
+            
             std_initial_recipe = [float(val) for val in df_to_use.iloc[:, 0].tolist()]
             bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
             
