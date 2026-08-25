@@ -401,9 +401,15 @@ with col_input:
                 edited_df = st.data_editor(df_input, use_container_width=True, key=table_key)
                 edited_df = edited_df.fillna(0.0)
                 
-                std_initial_recipe = edited_df.iloc[:, 0].tolist()
+                # 🌟 데이터 추출 안전장치 추가
+                std_initial_recipe = [float(val) for val in edited_df.iloc[:, 0].tolist()]
                 bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
-                bat_actual_recipes = edited_df.iloc[:, 1:].T.values.tolist()
+                
+                # 각 배치별 실제 투입량 행렬을 숫자로 명확하게 변환
+                bat_actual_recipes = []
+                for col_idx in range(1, edited_df.shape[1]):
+                    col_vals = [float(val) for val in edited_df.iloc[:, col_idx].tolist()]
+                    bat_actual_recipes.append(col_vals)
                 
                 run_calc = st.button("🚀 정밀 보정 계산 시작", type="primary", use_container_width=True)
             else:
