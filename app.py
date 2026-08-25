@@ -171,6 +171,19 @@ LIGHT_MAP = {
     "TL84 (F11)": (custom_tl84_X, custom_tl84_Y, custom_tl84_Z)
 }
 
+def get_lab_from_r(r_array_31, light_name="D65"):
+    shape_10nm = colour.SpectralShape(400, 700, 10)
+    cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_10nm)
+    light_data = LIGHT_MAP.get(light_name, LIGHT_MAP["D65"])
+    W_X = light_data[0].copy().align(shape_10nm).values
+    W_Y = light_data[1].copy().align(shape_10nm).values
+    W_Z = light_data[2].copy().align(shape_10nm).values
+    W = np.column_stack((W_X, W_Y, W_Z))
+    wp_XYZ = np.sum(W, axis=0)
+    wp_xy = colour.XYZ_to_xy(wp_XYZ)
+    XYZ = np.dot(r_array_31, W)
+    return colour.XYZ_to_Lab(XYZ, illuminant=wp_xy)
+
 def get_preview_hex(target_r_array, light_name="D65"):
     shape_10nm = colour.SpectralShape(400, 700, 10)
     cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_10nm)
@@ -287,36 +300,32 @@ def parse_qtx_content(content):
         low_match = re.search(fr'{prefix}REFLLOW=(\d+)', block_content)
         if r_match:
             name = name_match.group(1).strip().rstrip(',') if name_match else "Unknown"
-            r_vals = [float(x.strip()) / 100.0 for x in r_match.group(1).split(',') if x.strip()]
+            r_str = r_match.group(1)
+            r_vals = [float(x.strip()) / 100.0 for x in r_str.split(',') if x.strip()]
             start_wl = int(low_match.group(1)) if low_match else 400
             current_wls = np.array([start_wl + j * 10 for j in range(len(r_vals))])
-            target_wls = np.arange(400, 710, 10)
-            r_31 = np.interp(target_wls, current_wls, r_vals)
-            data_dict = {'name': name, 'r_31': r_31, 'ks_31': get_ks(r_31)}
+            target_wls = np.arange(360, 710, 10)
+            r_35 = np.interp(target_wls, current_wls, r_vals)
+            data_dict = {'name': name, 'r_35': r_35, 'r_31': r_35[4:35], 'ks_31': get_ks(r_35[4:35])}
             if block_type == 'STANDARD_DATA': standards.append(data_dict)
             else: batches.append(data_dict)
     return standards, batches
 
-# 🌟 새로운 보정 연산 로직 (Datacolor 예상 처방 vs 실제 투입 레시피 대조)
 def calculate_advanced_correction(std_ks, bat_ks_list, bat_expected_recipes, bat_actual_recipes, blank_ks_arr, dye_interpolators, mode):
     num_dyes = len(dye_interpolators)
     
-    # 각 염료별 발색 교정 계수(CF) 산출
     def cf_objective(cf_array):
         total_error = 0
         for i, bat_ks in enumerate(bat_ks_list):
             est_ks = np.copy(blank_ks_arr)
-            # 현장에서 실제로 투입한 레시피에 발색 계수를 곱해 예상되는 실측 K/S 산출
             for j in range(num_dyes): 
                 est_ks += dye_interpolators[j](bat_actual_recipes[i][j]) * cf_array[j]
             total_error += np.sum((bat_ks - est_ks)**2)
         return total_error
 
-    # CF 상한/하한을 부드럽게 설정 (0.5 ~ 1.5)
     res_cf = minimize(cf_objective, np.ones(num_dyes), bounds=[(0.5, 1.5) for _ in range(num_dyes)], method='SLSQP')
     optimal_cf = res_cf.x if res_cf.success else np.ones(num_dyes)
     
-    # 타겟(STD)을 맞추기 위한 최적 처방 산출
     def recipe_objective(recipe):
         est_ks = np.copy(blank_ks_arr)
         for j in range(num_dyes): 
@@ -344,8 +353,8 @@ std_data = None
 selected_raw_dyes = []
 selected_display_names = []
 std_initial_recipe = []
-bat_expected_list = []
-bat_actual_list = []
+bat_expected_recipes = []
+bat_actual_recipes = []
 selected_light = "D65"
 
 # --- 왼쪽 컬럼 (입력부) ---
@@ -375,7 +384,6 @@ with col_input:
                 selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
                 selected_display_names = [display_name_dict.get(d, d) for d in selected_raw_dyes]
                 
-                # 표 구성: 1열(STD 예상처방), 2열 이후(각 배치별 실제 투입량 입력 칸)
                 col_names = ["[STD] Datacolor 예상 처방"] + [f"[BAT] {b['name']} 실제 투입량" for b in active_batches]
                 df_input = pd.DataFrame(0.0, index=selected_display_names, columns=col_names)
                 
@@ -387,9 +395,7 @@ with col_input:
                 edited_df = st.data_editor(df_input, use_container_width=True, key=table_key)
                 edited_df = edited_df.fillna(0.0)
                 
-                # 데이터 분리
                 std_initial_recipe = edited_df.iloc[:, 0].tolist()
-                # 모든 배치에 동일한 Datacolor 예상 처방을 대조군으로 삼거나 각 배치별 예상 처방으로 확장 가능
                 bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
                 bat_actual_recipes = edited_df.iloc[:, 1:].T.values.tolist()
                 
@@ -402,10 +408,25 @@ with col_input:
     else:
         st.info("QTX 파일을 먼저 업로드해 주세요.")
 
-# --- 오른쪽 컬럼 (결과부) ---
+# --- 오른쪽 컬럼 (결과부 주제 ---
 with col_result:
     st.markdown("### 3. 정밀 분석 및 보정 결과")
     
+    if uploaded_file and standards and batches:
+        std_lab = get_lab_from_r(std_data['r_35'], selected_light)
+        de_records = []
+        for b in active_batches:
+            bat_lab = get_lab_from_r(b['r_35'], selected_light)
+            de_val = colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1)
+            de_records.append({
+                "배치(BAT) 명칭": b['name'],
+                f"dE (CMC) [{selected_light}]": round(de_val, 2)
+            })
+        
+        with st.container(border=True):
+            st.markdown(f"#### 📊 타겟(STD) 대비 배치(BAT) 색차 분석")
+            st.dataframe(pd.DataFrame(de_records), hide_index=True, use_container_width=True)
+
     if run_calc and std_data is not None and len(active_batches) > 0:
         with st.spinner("발색 경향성 분석 및 처방 최적화 중..."):
             dye_interpolators = []
@@ -464,9 +485,10 @@ with col_result:
             else: 
                 st.error("보정 처방을 산출하는 데 실패했습니다.")
     else:
-        st.markdown("""
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 250px; color: #999; border: 1px dashed #ccc; border-radius: 10px; background-color: #f8f9fa;">
-            <span class='material-symbols-outlined' style='font-size: 48px;'>science</span>
-            <p style="margin-top: 10px; font-size: 15px;">왼쪽 화면에서 데이터를 입력하고 <b>[정밀 보정 계산 시작]</b> 버튼을 눌러주세요.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        if not (run_calc and std_data is not None):
+            st.markdown("""
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; color: #999; border: 1px dashed #ccc; border-radius: 10px; background-color: #f8f9fa;">
+                <span class='material-symbols-outlined' style='font-size: 48px;'>science</span>
+                <p style="margin-top: 10px; font-size: 15px;">왼쪽 화면에서 데이터를 입력하고 <b>[정밀 보정 계산 시작]</b> 버튼을 눌러주세요.</p>
+            </div>
+            """, unsafe_allow_html=True)
