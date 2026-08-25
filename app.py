@@ -327,16 +327,69 @@ def calculate_multi_batch_correction(std_ks, bat_ks_list, bat_expected_recipes, 
     }
 
 # ==========================================
-# 5. 상단 메뉴 및 좌측 사이드바 구성 
+# 4.5 백포 선택 팝업 (Disperse 전용) - 수정됨
+# ==========================================
+def set_temp_disp(val): 
+    st.session_state.temp_disp = val
+
+def confirm_disp_action():
+    st.session_state.disperse_sub = st.session_state.temp_disp
+    st.session_state.dye_mode = "Disperse"
+    st.session_state.selected_dyes = []
+    st.session_state.top_results = None
+
+@st.dialog("백포 선택 (Disperse)")
+def disperse_dialog():
+    st.markdown("분산염료처방 탐색에 사용할 백포를 선택해주세요.")
+    if "temp_disp" not in st.session_state: 
+        st.session_state.temp_disp = st.session_state.disperse_sub
+        
+    col1, col2 = st.columns(2)
+    with col1: 
+        if st.button("Jersey", use_container_width=True, type="primary" if st.session_state.temp_disp == "Jersey" else "secondary", key="dlg_jersey_btn"):
+            set_temp_disp("Jersey")
+            st.rerun()
+    with col2: 
+        if st.button("Woven", use_container_width=True, type="primary" if st.session_state.temp_disp == "Woven" else "secondary", key="dlg_woven_btn"):
+            set_temp_disp("Woven")
+            st.rerun()
+            
+    st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+    if st.button("확인", use_container_width=True, type="primary", key="dlg_confirm_btn"):
+        confirm_disp_action()
+        st.rerun()
+
+
+# ==========================================
+# 5. 상단 메뉴 및 좌측 사이드바 구성 - 수정됨
 # ==========================================
 top_menu_cols = st.columns([1, 1, 1.2, 1, 1])
 with top_menu_cols[0]:
-    st.button("Reactive", use_container_width=True, type="primary" if dye_mode == "Reactive" else "secondary", on_click=set_dye_mode, args=("Reactive",), key="btn_react_top")
+    if st.button("Reactive", use_container_width=True, type="primary" if dye_mode == "Reactive" else "secondary", key="top_reactive_btn"):
+        set_dye_mode("Reactive")
+        st.rerun()
     st.markdown('<div id="top-menu-marker"></div>', unsafe_allow_html=True)
-with top_menu_cols[1]: st.button("Disperse", use_container_width=True, type="primary" if dye_mode == "Disperse" else "secondary", key="btn_disp_top")
-with top_menu_cols[2]: st.button("Reactive (CPB)", use_container_width=True, type="primary" if dye_mode == "Reactive (CPB)" else "secondary", on_click=set_dye_mode, args=("Reactive (CPB)",), key="btn_cpb_top")
-with top_menu_cols[3]: st.button("CDP", use_container_width=True, type="primary" if dye_mode == "CDP" else "secondary", on_click=set_dye_mode, args=("CDP",), key="btn_cdp_top")
-with top_menu_cols[4]: st.button("Acid", use_container_width=True, type="primary" if dye_mode == "Acid" else "secondary", on_click=set_dye_mode, args=("Acid",), key="btn_acid_top")
+
+with top_menu_cols[1]:
+    # 🌟 Disperse 버튼을 누르면 즉시 팝업 함수 호출
+    if st.button("Disperse", use_container_width=True, type="primary" if dye_mode == "Disperse" else "secondary", key="top_disperse_btn"):
+        st.session_state.temp_disp = st.session_state.disperse_sub
+        disperse_dialog()
+
+with top_menu_cols[2]:
+    if st.button("Reactive (CPB)", use_container_width=True, type="primary" if dye_mode == "Reactive (CPB)" else "secondary", key="top_cpb_btn"):
+        set_dye_mode("Reactive (CPB)")
+        st.rerun()
+
+with top_menu_cols[3]:
+    if st.button("CDP", use_container_width=True, type="primary" if dye_mode == "CDP" else "secondary", key="top_cdp_btn"):
+        set_dye_mode("CDP")
+        st.rerun()
+
+with top_menu_cols[4]:
+    if st.button("Acid", use_container_width=True, type="primary" if dye_mode == "Acid" else "secondary", key="top_acid_btn"):
+        set_dye_mode("Acid")
+        st.rerun()
 
 with st.sidebar:
     st.markdown(f"<h3 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>palette</span>염료 리스트</h3>", unsafe_allow_html=True)
