@@ -274,21 +274,104 @@ class DyePredictor:
         if c <= self.max_c: return self.interpolator(c)
         else: return self.max_ks * (c / self.max_c)
 
-# 🌟 역산(역추적) 기반 정밀 보정 엔진
-def calculate_multi_batch_correction(std_ks, bat_ks_list, bat_expected_recipes, bat_actual_recipes, blank_ks_arr, dye_predictors, mode):
+# 🌟 [수정] 원본 산출 프로그램의 방식을 100% 동일하게 심은 역산 스마트 매치 엔진
+def calculate_multi_batch_correction(std_ks, std_r_31, bat_ks_list, bat_r_31_list, bat_expected_recipes, bat_actual_recipes, blank_ks_arr, dye_predictors, mode, light_names):
     num_dyes = len(dye_predictors)
-    
-    def predict_recipe_for_ks(target_ks, ref_recipe):
-        def objective(conc):
-            est_ks = np.copy(blank_ks_arr)
-            for j in range(num_dyes): est_ks += dye_predictors[j](conc[j])
-            error = np.sum((target_ks - est_ks)**2)
-            error += 0.05 * np.sum((conc - ref_recipe)**2)
-            return error
+    shape_10nm = colour.SpectralShape(400, 700, 10)
+    cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_10nm)
+    cmfs_values = cmfs.values
 
-        max_bound = 300.0 if mode == "Reactive (CPB)" else 30.0
+    light_data_list = []
+    for l_name in light_names:
+        light_d = LIGHT_MAP[l_name]
+        if isinstance(light_d, tuple):
+            W_X = light_d[0].copy().align(shape_10nm).values
+            W_Y = light_d[1].copy().align(shape_10nm).values
+            W_Z = light_d[2].copy().align(shape_10nm).values
+            W = np.column_stack((W_X, W_Y, W_Z))
+        else:
+            light_spd = light_d.copy().align(shape_10nm)
+            light_values = light_spd.values
+            dw = 10
+            k = np.sum(light_values * cmfs_values[:, 1]) * dw
+            W = (light_values[:, np.newaxis] * cmfs_values) * dw / k 
+        wp_XYZ = np.sum(W, axis=0) 
+        wp_xy = colour.XYZ_to_xy(wp_XYZ)
+        light_data_list.append({'W': W, 'wp_xy': wp_xy})
+    
+    def predict_recipe_for_ks(target_ks, target_r_31, ref_recipe):
+        precalc_lights = []
+        for i, ld in enumerate(light_data_list):
+            XYZ_tgt = np.dot(target_r_31, ld['W'])
+            lab_tgt = colour.XYZ_to_Lab(XYZ_tgt, illuminant=ld['wp_xy'])
+            precalc_lights.append({'W': ld['W'], 'wp_xy': ld['wp_xy'], 'lab_tgt': lab_tgt})
+
+        net_target_ks = np.maximum(target_ks - blank_ks_arr, 0)
+        unit_ks_list_for_nnls = []
+        for j in range(num_dyes):
+            max_c = dye_predictors[j].max_c
+            interp_func = dye_predictors[j].interpolator
+            available_concs = dye_predictors[j].concs[1:]
+            lowest_c = available_concs[0] if len(available_concs) > 0 else max_c
+            eval_c = min(0.1, lowest_c)
+            unit_ks = interp_func(eval_c) / eval_c if eval_c > 0 else np.zeros(len(blank_ks_arr))
+            unit_ks_list_for_nnls.append(unit_ks)
+        
+        if num_dyes > 0:
+            A = np.column_stack(unit_ks_list_for_nnls)
+            approx_conc, _ = nnls(A, net_target_ks)
+        else:
+            approx_conc = ref_recipe
+
+        def evaluate_lights_local(conc):
+            total_ks_local = np.copy(blank_ks_arr)
+            for j in range(num_dyes):
+                c = conc[j]
+                max_c = dye_predictors[j].max_c
+                interp_func = dye_predictors[j].interpolator
+                if c <= max_c:
+                    dye_ks = interp_func(c)
+                else:
+                    if mode == "Acid":
+                        excess_ratio = (c - max_c) / max_c if max_c > 0 else 0
+                        damping = max(0.2, 0.85 - (0.2 * excess_ratio))
+                        dye_ks = interp_func(max_c) + (interp_func(max_c) / max_c) * (c - max_c) * damping
+                    else:
+                        dye_ks = interp_func(max_c) + (interp_func(max_c) / max_c) * (c - max_c) * 0.85 
+                total_ks_local += np.maximum(dye_ks, 0)
+            
+            est_r_local = 1 + total_ks_local - np.sqrt(total_ks_local**2 + 2 * total_ks_local)
+            
+            des = []
+            l1_data = precalc_lights[0]
+            XYZ_est_1 = np.dot(est_r_local, l1_data['W'])
+            lab_est_1 = colour.XYZ_to_Lab(XYZ_est_1, illuminant=l1_data['wp_xy'])
+            lab_tgt_1 = l1_data['lab_tgt']
+            de_1 = colour.delta_E(lab_est_1, lab_tgt_1, method='CMC', l=2, c=1)
+            des.append(de_1)
+
+            for idx_l in range(1, len(precalc_lights)):
+                ld = precalc_lights[idx_l]
+                XYZ_est = np.dot(est_r_local, ld['W'])
+                lab_est = colour.XYZ_to_Lab(XYZ_est, illuminant=ld['wp_xy'])
+                lab_est_corr = lab_est + (lab_tgt_1 - lab_est_1)
+                de = colour.delta_E(lab_est_corr, ld['lab_tgt'], method='CMC', l=2, c=1)
+                de = apply_dc_correction(light_names[idx_l], de)
+                des.append(de)
+            return des
+
+        def objective(conc):
+            des = evaluate_lights_local(conc)
+            weight_obj = des[0]
+            if len(des) > 1: weight_obj += 0.01 * des[1]
+            if len(des) > 2: weight_obj += 0.01 * des[2]
+            weight_obj += 0.001 * np.sum((conc - ref_recipe)**2) 
+            return weight_obj
+
+        max_bound = 300.0 if mode == "Reactive (CPB)" else 150.0
         bnds = [(0.0, max_bound) for _ in range(num_dyes)]
-        res = minimize(objective, x0=ref_recipe, bounds=bnds, method='SLSQP')
+        x0_start = np.clip(approx_conc, 0.0, max_bound)
+        res = minimize(objective, x0=x0_start, bounds=bnds, method='SLSQP', options={'ftol': 1e-7, 'disp': False})
         return res.x
 
     cf_list = []
@@ -296,7 +379,7 @@ def calculate_multi_batch_correction(std_ks, bat_ks_list, bat_expected_recipes, 
     
     for i, bat_ks in enumerate(bat_ks_list):
         actual_rec = np.array(bat_actual_recipes[i])
-        calculated_bat_rec = predict_recipe_for_ks(bat_ks, actual_rec)
+        calculated_bat_rec = predict_recipe_for_ks(bat_ks, bat_r_31_list[i], actual_rec)
         calc_bat_recs.append(calculated_bat_rec)
         
         batch_cfs = []
@@ -311,7 +394,7 @@ def calculate_multi_batch_correction(std_ks, bat_ks_list, bat_expected_recipes, 
     optimal_cf = np.mean(cf_list, axis=0) if cf_list else np.ones(num_dyes)
 
     std_expected_rec = np.array(bat_expected_recipes[0]) if len(bat_expected_recipes) > 0 else np.zeros(num_dyes)
-    calc_std_rec = predict_recipe_for_ks(std_ks, std_expected_rec)
+    calc_std_rec = predict_recipe_for_ks(std_ks, std_r_31, std_expected_rec)
     
     final_recipe = []
     for j in range(num_dyes):
@@ -321,13 +404,14 @@ def calculate_multi_batch_correction(std_ks, bat_ks_list, bat_expected_recipes, 
     return {
         "success": True, 
         "calibration_factors": optimal_cf, 
+        "batch_cfs": cf_list, 
         "final_recipe": final_recipe,
         "calc_std_rec": calc_std_rec,
         "calc_bat_recs": calc_bat_recs
     }
 
 # ==========================================
-# 4.5 백포 선택 팝업 (Disperse 전용) - 수정 완료
+# 4.5 백포 선택 팝업 (Disperse 전용)
 # ==========================================
 def handle_disp_selection(val):
     st.session_state.temp_disp = val
@@ -346,7 +430,6 @@ def disperse_dialog():
         
     col1, col2 = st.columns(2)
     with col1: 
-        # on_click 콜백을 사용하여 클릭 이벤트가 확실하게 잡히도록 수정
         st.button(
             "Jersey", 
             use_container_width=True, 
@@ -370,9 +453,8 @@ def disperse_dialog():
         confirm_disp_action()
         st.rerun()
 
-
 # ==========================================
-# 5. 상단 메뉴 및 좌측 사이드바 구성 - 수정됨
+# 5. 상단 메뉴 및 좌측 사이드바 구성 
 # ==========================================
 top_menu_cols = st.columns([1, 1, 1.2, 1, 1])
 with top_menu_cols[0]:
@@ -382,7 +464,6 @@ with top_menu_cols[0]:
     st.markdown('<div id="top-menu-marker"></div>', unsafe_allow_html=True)
 
 with top_menu_cols[1]:
-    # 🌟 Disperse 버튼을 누르면 즉시 팝업 함수 호출
     if st.button("Disperse", use_container_width=True, type="primary" if dye_mode == "Disperse" else "secondary", key="top_disperse_btn"):
         st.session_state.temp_disp = st.session_state.disperse_sub
         disperse_dialog()
@@ -408,7 +489,6 @@ with st.sidebar:
     st.caption("클릭하여 선택 / 해제하세요.")
     st.markdown("---")
     
-    # 🌟 오류 수정 구간: 2개씩만 언패킹하도록 올바르게 수정 완료!
     for idx, (raw_name, display_name) in enumerate(all_dyes_ordered):
         btn_type = "primary" if raw_name in st.session_state.selected_dyes else "secondary"
         st.button(display_name, key=f"dye_{raw_name}_{idx}", use_container_width=True, type=btn_type, on_click=toggle_dye, args=(raw_name,))
@@ -518,38 +598,58 @@ with col_results:
                 
                 dye_predictors.append(DyePredictor(concs_array, ks_matrix))
             
+            active_lights = [light1_name]
+            if light2_name != "없음": active_lights.append(light2_name)
+            if light3_name != "없음": active_lights.append(light3_name)
+
             result = calculate_multi_batch_correction(
-                std_data['ks_31'], [b['ks_31'] for b in active_batches], 
-                bat_expected_recipes, bat_actual_recipes, blank_ks_31, dye_predictors, st.session_state.dye_mode
+                std_data['ks_31'], std_data['r_35'][4:35], 
+                [b['ks_31'] for b in active_batches], [b['r_35'][4:35] for b in active_batches],
+                bat_expected_recipes, bat_actual_recipes, blank_ks_31, dye_predictors, st.session_state.dye_mode, active_lights
             )
             
             if result['success']:
                 with st.container(border=True):
-                    st.markdown(f"#### 1. 현장 염료 발색 상태 (역산 분석)")
-                    
-                    calc_bat_rec_0 = result['calc_bat_recs'][0]
-                    actual_bat_rec_0 = bat_actual_recipes[0]
-                    cfs = result['calibration_factors']
-                    calc_std_rec = result['calc_std_rec']
+                    st.markdown(f"#### 1. 현장 염료 발색 상태 (배치별 역산 분석)")
                     unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                    b_name = active_batches[0]['name']
                     
-                    analysis_df = pd.DataFrame({
+                    # 🌟 여러 개의 배치를 각각 따로 렌더링
+                    for i, b_info in enumerate(active_batches):
+                        b_name = b_info['name']
+                        calc_bat_rec = result['calc_bat_recs'][i]
+                        actual_bat_rec = bat_actual_recipes[i]
+                        batch_cf = result['batch_cfs'][i]
+                        
+                        st.markdown(f"**🔹 {b_name} 분석**")
+                        
+                        batch_df = pd.DataFrame({
+                            "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
+                            f"실제 투입 ({unit_label})": [round(c, 4) for c in actual_bat_rec],
+                            f"역산 산출 ({unit_label})": [round(c, 4) for c in calc_bat_rec],
+                            "단일 역산 효율": [f"{cf*100:.1f}%" for cf in batch_cf]
+                        })
+                        
+                        st.dataframe(batch_df.style.format({
+                            f"실제 투입 ({unit_label})": "{:.2f}",
+                            f"역산 산출 ({unit_label})": "{:.2f}"
+                        }), hide_index=True, use_container_width=True)
+                    
+                    st.markdown("---")
+                    st.markdown("**💡 종합 적용 데이터**")
+                    
+                    # 종합 적용 데이터 렌더링
+                    summary_df = pd.DataFrame({
                         "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                        f"STD 역산 처방 ({unit_label})": [round(c, 4) for c in calc_std_rec],
-                        f"BAT 실제 투입 ({unit_label})": [round(c, 4) for c in actual_bat_rec_0],
-                        f"BAT 역산 산출 ({unit_label})": [round(c, 4) for c in calc_bat_rec_0],
-                        "역산 효율 (CF)": [f"{cf*100:.1f}%" for cf in cfs]
+                        f"타겟(STD) 역산 처방 ({unit_label})": [round(c, 4) for c in result['calc_std_rec']],
+                        "최종 적용 효율 (평균 CF)": [f"{cf*100:.1f}%" for cf in result['calibration_factors']]
                     })
                     
-                    st.dataframe(analysis_df.style.format({
-                        f"STD 역산 처방 ({unit_label})": "{:.2f}",
-                        f"BAT 실제 투입 ({unit_label})": "{:.2f}",
-                        f"BAT 역산 산출 ({unit_label})": "{:.2f}"
+                    st.dataframe(summary_df.style.format({
+                        f"타겟(STD) 역산 처방 ({unit_label})": "{:.2f}"
                     }), hide_index=True, use_container_width=True)
                     
-                    st.caption(f"※ **BAT 역산 산출**: '{b_name}' 배치의 측정 색상(K/S)을 내기 위해, 이론적으로 필요했던 처방량입니다.")
-                    st.caption("※ **역산 효율 (CF)**: (BAT 역산 산출량 ÷ BAT 실제 투입량). 100% 미만이면 현장에서 염료 발색이 덜 된 것을 의미합니다.")
+                    st.caption("※ **역산 산출**: 해당 배치의 측정 색상(K/S)을 내기 위해, 이론적으로 필요했던 처방량입니다.")
+                    st.caption("※ 2개 이상의 배치를 선택한 경우, 각 배치의 효율을 종합적으로 산출한 평균값을 최종 타겟 매칭에 반영합니다.")
                 
                 with st.container(border=True):
                     st.markdown(f"#### 2. 🎯 타겟(STD) 매칭을 위한 최종 보정 추천 처방")
