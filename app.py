@@ -171,17 +171,23 @@ LIGHT_MAP = {
     "TL84 (F11)": (custom_tl84_X, custom_tl84_Y, custom_tl84_Z)
 }
 
-def get_lab_from_r(r_array_31, light_name="D65"):
-    shape_10nm = colour.SpectralShape(400, 700, 10)
-    cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_10nm)
+def get_lab_from_r(r_array, light_name="D65"):
+    # 🌟 31개 또는 35개 데이터 길이에 상관없이 동적으로 밴드(파장 대역) 맞추기
+    num_points = len(r_array)
+    start_wl = 360 if num_points == 35 else 400
+    
+    shape_target = colour.SpectralShape(start_wl, start_wl + (num_points - 1) * 10, 10)
+    cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_target)
+    
     light_data = LIGHT_MAP.get(light_name, LIGHT_MAP["D65"])
-    W_X = light_data[0].copy().align(shape_10nm).values
-    W_Y = light_data[1].copy().align(shape_10nm).values
-    W_Z = light_data[2].copy().align(shape_10nm).values
+    W_X = light_data[0].copy().align(shape_target).values
+    W_Y = light_data[1].copy().align(shape_target).values
+    W_Z = light_data[2].copy().align(shape_target).values
     W = np.column_stack((W_X, W_Y, W_Z))
+    
     wp_XYZ = np.sum(W, axis=0)
     wp_xy = colour.XYZ_to_xy(wp_XYZ)
-    XYZ = np.dot(r_array_31, W)
+    XYZ = np.dot(r_array, W)
     return colour.XYZ_to_Lab(XYZ, illuminant=wp_xy)
 
 def get_preview_hex(target_r_array, light_name="D65"):
