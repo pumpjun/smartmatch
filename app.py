@@ -408,11 +408,12 @@ with col_input:
     else:
         st.info("QTX 파일을 먼저 업로드해 주세요.")
 
-# --- 오른쪽 컬럼 (결과부 주제 ---
+# --- 오른쪽 컬럼 (결과부) ---
 with col_result:
     st.markdown("### 3. 정밀 분석 및 보정 결과")
     
-    if uploaded_file and standards and batches:
+    # 🌟 안전하게 변수 존재 여부를 먼저 체크하도록 수정
+    if uploaded_file is not None and 'standards' in locals() and 'batches' in locals() and standards and batches:
         std_lab = get_lab_from_r(std_data['r_35'], selected_light)
         de_records = []
         for b in active_batches:
@@ -427,7 +428,7 @@ with col_result:
             st.markdown(f"#### 📊 타겟(STD) 대비 배치(BAT) 색차 분석")
             st.dataframe(pd.DataFrame(de_records), hide_index=True, use_container_width=True)
 
-    if run_calc and std_data is not None and len(active_batches) > 0:
+    if run_calc and 'std_data' in locals() and std_data is not None and len(active_batches) > 0:
         with st.spinner("발색 경향성 분석 및 처방 최적화 중..."):
             dye_interpolators = []
             for dye_name in selected_raw_dyes:
@@ -485,7 +486,7 @@ with col_result:
             else: 
                 st.error("보정 처방을 산출하는 데 실패했습니다.")
     else:
-        if not (run_calc and std_data is not None):
+        if not (run_calc and 'std_data' in locals() and std_data is not None):
             st.markdown("""
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; color: #999; border: 1px dashed #ccc; border-radius: 10px; background-color: #f8f9fa;">
                 <span class='material-symbols-outlined' style='font-size: 48px;'>science</span>
