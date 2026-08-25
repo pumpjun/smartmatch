@@ -268,7 +268,8 @@ def parse_qtx_content(content):
             else: batches.append(data_dict)
     return standards, batches
 
-def calculate_smart_correction(std_ks, bat_ks_list, bat_recipes, std_initial_recipe, blank_ks_arr, dye_interpolators):
+# 🌟 CPB 모드일 때는 최대 농도 상한선을 150.0으로 넉넉하게 확장
+def calculate_smart_correction(std_ks, bat_ks_list, bat_recipes, std_initial_recipe, blank_ks_arr, dye_interpolators, mode):
     num_dyes = len(dye_interpolators)
     def cf_objective(cf_array):
         total_error = 0
@@ -287,12 +288,15 @@ def calculate_smart_correction(std_ks, bat_ks_list, bat_recipes, std_initial_rec
         return np.sum((std_ks - est_ks)**2)
     
     initial_recipe = std_initial_recipe if sum(std_initial_recipe) > 0 else np.mean(bat_recipes, axis=0)
-    res_recipe = minimize(recipe_objective, initial_recipe, bounds=[(0.0, 15.0) for _ in range(num_dyes)], method='SLSQP')
+    
+    # 🌟 CPB는 최대 150.0 g/l, 나머지는 15.0% 한계 적용
+    max_bound = 150.0 if mode == "Reactive (CPB)" else 15.0
+    res_recipe = minimize(recipe_objective, initial_recipe, bounds=[(0.0, max_bound) for _ in range(num_dyes)], method='SLSQP')
     
     return {"success": res_recipe.success, "calibration_factors": optimal_cf, "final_recipe": res_recipe.x if res_recipe.success else None}
 
 
-# 🌟 메인 화면 좌/우 2분할 레이아웃
+# 🌟 메인 화면 좌/우 2분할
 col_input, col_result = st.columns([1, 1.2], gap="large")
 
 run_calc = False
@@ -325,17 +329,18 @@ with col_input:
             active_batches = [b for b in batches if b['name'] in selected_bat_names]
             
             if len(active_batches) > 0:
-                # 🌟 선택된 염료만 A열(칼라 순서 번호) 기준 오름차순 정렬
                 selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
                 selected_display_names = [display_name_dict.get(d, d) for d in selected_raw_dyes]
                 
                 col_names = ["[STD] 예상 처방"] + [b['name'] for b in active_batches]
                 df_input = pd.DataFrame(0.0, index=selected_display_names, columns=col_names)
                 
-                # 입력 표 리셋 방지를 위한 고유 키 및 fillna 적용
                 table_key = f"table_{'-'.join(selected_raw_dyes)}_{'-'.join(col_names)}"
                 
-                st.markdown("**염료별 초기 예상 처방(STD)과 실제 투입했던 배치의 농도(%)를 입력하세요:**")
+                # 🌟 CPB 모드 여부에 따라 안내 문구 단위를 동적으로 변경 (%) 또는 (g/l)
+                unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
+                st.markdown(f"**염료별 초기 예상 처방(STD)과 실제 투입했던 배치의 농도({unit_label})를 입력하세요:**")
+                
                 edited_df = st.data_editor(df_input, use_container_width=True, key=table_key)
                 edited_df = edited_df.fillna(0.0)
                 
@@ -372,7 +377,11 @@ with col_result:
             
             bat_ks_list = [b['ks_31'] for b in active_batches]
             
-            result = calculate_smart_correction(std_data['ks_31'], bat_ks_list, bat_recipes, std_initial_recipe, blank_ks, dye_interpolators)
+            # 🌟 모드 인자 전달
+            result = calculate_smart_correction(
+                std_data['ks_31'], bat_ks_list, bat_recipes, std_initial_recipe, 
+                blank_ks, dye_interpolators, st.session_state.dye_mode
+            )
             
             if result['success']:
                 with st.container(border=True):
@@ -381,23 +390,29 @@ with col_result:
                     st.json(cf_data)
                 
                 with st.container(border=True):
-                    st.markdown("#### 2. 🎯 타겟(STD) 매칭을 위한 최종 추천 처방")
+                    unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
+                    st.markdown(f"#### 2. 🎯 타겟(STD) 매칭을 위한 최종 추천 처방 ({unit_label})")
+                    
                     final_recipe = result['final_recipe']
                     delta_recipe = [final - initial for final, initial in zip(final_recipe, std_initial_recipe)]
                     
                     recipe_df = pd.DataFrame({
                         "염료명": selected_display_names,
-                        "기존 예상 처방 (%)": [round(c, 4) for c in std_initial_recipe],
-                        "최종 추천 처방 (%)": [round(c, 4) for c in final_recipe],
-                        "증감량 (Add/Reduce)": [round(d, 4) for d in delta_recipe]
+                        f"기존 예상 처방 ({unit_label})": [round(c, 4) for c in std_initial_recipe],
+                        f"최종 추천 처방 ({unit_label})": [round(c, 4) for c in final_recipe],
+                        f"증감량 (Add/Reduce) ({unit_label})": [round(d, 4) for d in delta_recipe]
                     })
                     
                     def color_delta(val): 
                         return f"color: {'#d32f2f' if val > 0 else ('#1976d2' if val < 0 else 'black')}; font-weight: bold;"
                         
                     st.dataframe(
-                        recipe_df.style.map(color_delta, subset=['증감량 (Add/Reduce)'])
-                                     .format({"기존 예상 처방 (%)": "{:.4f}", "최종 추천 처방 (%)": "{:.4f}", "증감량 (Add/Reduce)": "{:+.4f}"}), 
+                        recipe_df.style.map(color_delta, subset=[f"증감량 (Add/Reduce) ({unit_label})"])
+                                     .format({
+                                         f"기존 예상 처방 ({unit_label})": "{:.2f}", 
+                                         f"최종 추천 처방 ({unit_label})": "{:.2f}", 
+                                         f"증감량 (Add/Reduce) ({unit_label})": "{:+.2f}"
+                                     }), 
                         hide_index=True, 
                         use_container_width=True
                     )
