@@ -449,8 +449,13 @@ with col_result:
                     ks_matrix.append(ks_net)
                 dye_interpolators.append(PchipInterpolator(concs_array, np.array(ks_matrix), axis=0))
             
+            # 🌟 수정: 입력 표에서 배치별 실제 투입량 데이터가 빠짐없이 들어가도록 명확히 추출
             bat_ks_list = [b['ks_31'] for b in active_batches]
             
+            # edited_df의 1열(인덱스 1)부터 끝까지가 각 배치별 실제 투입량입니다.
+            bat_actual_recipes = edited_df.iloc[:, 1:].T.values.tolist()
+            bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
+
             result = calculate_advanced_correction(
                 std_data['ks_31'], bat_ks_list, bat_expected_recipes, bat_actual_recipes, 
                 blank_ks, dye_interpolators, st.session_state.dye_mode
