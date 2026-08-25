@@ -109,16 +109,13 @@ def load_dye_mapping(mode, _valid_keys):
         df = pd.read_excel(target_path, header=None)
         mapping_list, disp_dict, sort_order_dict = [], {}, {}
         for _, row in df.iterrows():
-            # A열 (칼라 정렬 순서용 숫자)
             try: sort_val = float(row[0]) if pd.notna(row[0]) else 999.0
             except: sort_val = 999.0
                 
             raw_name, display_name = str(row[1]).strip(), str(row[2]).strip()
             if raw_name in _valid_keys:
-                # 🌟 사이드바는 엑셀에 적힌 C열 기준 원래 순서(1행, 2행 순차) 그대로 유지
                 mapping_list.append((raw_name, display_name))
                 disp_dict[raw_name] = display_name
-                # 메인 표 정렬을 위해 A열 숫자를 별도 저장
                 sort_order_dict[raw_name] = sort_val
                 
         return mapping_list, disp_dict, sort_order_dict
@@ -129,7 +126,7 @@ dye_db = load_dye_data(st.session_state.dye_mode)
 all_dyes_ordered, display_name_dict, sort_order_dict = load_dye_mapping(st.session_state.dye_mode, dye_db.keys())
 
 # ==========================================
-# 3. 백포 및 색상 계산 로직
+# 3. 백포 및 색상 계산 로직 (광원 스펙트럼 포함)
 # ==========================================
 def get_ks(reflectance): return (1 - reflectance)**2 / (2 * reflectance)
 
@@ -154,13 +151,44 @@ custom_d65_X = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_d65_
 custom_d65_Y = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_d65_y_vals) / 100.0)), name='D65_Y')
 custom_d65_Z = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_d65_z_vals) / 100.0)), name='D65_Z')
 
-def get_preview_hex(target_r_array):
+astm_a_x_vals = [0.000, 0.000, 0.000, 0.002, 0.025, 0.134, 0.377, 0.686, 0.964, 1.080, 1.006, 0.731, 0.343, 0.078, 0.022, 0.218, 0.750, 1.642, 2.842, 4.336, 6.200, 8.262, 10.227, 11.945, 12.746, 12.337, 10.817, 8.560, 6.014, 3.887, 2.309, 1.276, 0.666, 0.336, 0.166, 0.082, 0.040, 0.020, 0.010, 0.005, 0.003, 0.001, 0.001]
+astm_a_y_vals = [0.000, 0.000, 0.000, 0.000, 0.003, 0.014, 0.039, 0.084, 0.156, 0.259, 0.424, 0.696, 1.082, 1.616, 2.422, 3.529, 4.840, 6.100, 7.250, 8.114, 8.758, 8.988, 8.760, 8.304, 7.468, 6.323, 5.033, 3.744, 2.506, 1.560, 0.911, 0.499, 0.259, 0.130, 0.065, 0.032, 0.016, 0.008, 0.004, 0.002, 0.001, 0.001, 0.000]
+astm_a_z_vals = [0.000, 0.000, 0.000, 0.008, 0.110, 0.615, 1.792, 3.386, 4.944, 5.806, 5.812, 4.919, 3.300, 1.973, 1.152, 0.658, 0.382, 0.211, 0.102, 0.032, 0.001, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000]
+custom_a_X = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_a_x_vals) / 100.0)), name='ASTM_A_X')
+custom_a_Y = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_a_y_vals) / 100.0)), name='ASTM_A_Y')
+custom_a_Z = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_a_z_vals) / 100.0)), name='ASTM_A_Z')
+
+astm_tl84_x_vals = [0.000, 0.000, 0.000, -0.010, 0.099, 0.182, 0.098, 2.796, 4.103, 1.534, 1.314, 0.681, 0.343, 0.176, 0.009, 0.034, 0.005, -0.145, 10.852, 12.320, 1.096, 1.157, 7.036, 8.982, 6.204, 26.264, 13.228, 3.797, 0.794, 0.481, 0.264, 0.084, 0.038, 0.023, 0.011, 0.014, 0.002, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000]
+astm_tl84_y_vals = [0.000, 0.000, 0.000, -0.001, 0.010, 0.019, 0.003, 0.372, 0.625, 0.388, 0.554, 0.578, 1.380, 2.955, 1.506, 0.564, 0.257, 0.170, 25.656, 24.661, 1.274, 1.214, 5.881, 6.382, 3.629, 13.321, 6.279, 1.631, 0.329, 0.192, 0.104, 0.033, 0.015, 0.009, 0.004, 0.005, 0.001, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000]
+astm_tl84_z_vals = [0.000, 0.000, 0.000, -0.044, 0.451, 0.829, 0.415, 13.964, 20.873, 8.310, 7.586, 4.498, 3.625, 3.789, 0.773, 0.074, 0.028, 0.027, 0.293, 0.148, -0.010, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000]
+custom_tl84_X = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_tl84_x_vals) / 100.0)), name='ASTM_TL84_X')
+custom_tl84_Y = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_tl84_y_vals) / 100.0)), name='ASTM_TL84_Y')
+custom_tl84_Z = colour.SpectralDistribution(dict(zip(wls_astm, np.array(astm_tl84_z_vals) / 100.0)), name='ASTM_TL84_Z')
+
+LIGHT_MAP = {
+    "D65": (custom_d65_X, custom_d65_Y, custom_d65_Z),
+    "A": (custom_a_X, custom_a_Y, custom_a_Z),
+    "TL84 (F11)": (custom_tl84_X, custom_tl84_Y, custom_tl84_Z)
+}
+
+def get_preview_hex(target_r_array, light_name="D65"):
     shape_10nm = colour.SpectralShape(400, 700, 10)
-    W = np.column_stack((custom_d65_X.copy().align(shape_10nm).values, custom_d65_Y.copy().align(shape_10nm).values, custom_d65_Z.copy().align(shape_10nm).values))
+    cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_10nm)
+    cmfs_values = cmfs.values
+    
+    light_data = LIGHT_MAP.get(light_name, LIGHT_MAP["D65"])
+    W_X = light_data[0].copy().align(shape_10nm).values
+    W_Y = light_data[1].copy().align(shape_10nm).values
+    W_Z = light_data[2].copy().align(shape_10nm).values
+    W = np.column_stack((W_X, W_Y, W_Z))
+        
     wp_XYZ = np.sum(W, axis=0)
     wp_xy = colour.XYZ_to_xy(wp_XYZ)
-    RGB_viz = np.clip(colour.XYZ_to_sRGB(np.dot(target_r_array, W), illuminant=wp_xy), 0, 1)
-    return "#{:02x}{:02x}{:02x}".format(int(RGB_viz[0]*255), int(RGB_viz[1]*255), int(RGB_viz[2]*255))
+    XYZ_tgt = np.dot(target_r_array, W)
+    
+    RGB_viz = colour.XYZ_to_sRGB(XYZ_tgt, illuminant=wp_xy)
+    RGB_viz = np.clip(RGB_viz, 0, 1)
+    return "#{:02x}{:02x}{:02x}".format(int(RGB_viz[0]*255), int(RGB_viz[1]*255), int(RGB_viz[2]*255)), [int(RGB_viz[0]*255), int(RGB_viz[1]*255), int(RGB_viz[2]*255)]
 
 @st.cache_data
 def get_all_dye_hex_dict(mode):
@@ -172,7 +200,8 @@ def get_all_dye_hex_dict(mode):
         spectrum_map = conc_data[[k for k in conc_data.keys() if float(k) == available_concs[-1]][0]]
         sorted_items = sorted(spectrum_map.items(), key=lambda x: int(x[0]))
         r_array_31 = np.interp(np.arange(400, 710, 10), np.array([int(k) for k, v in sorted_items]), np.array([float(v) for k, v in sorted_items]))
-        hex_dict[dye_name] = get_preview_hex(r_array_31)
+        hc, _ = get_preview_hex(r_array_31, "D65")
+        hex_dict[dye_name] = hc
     return hex_dict
 
 dye_hex_dict = get_all_dye_hex_dict(st.session_state.dye_mode)
@@ -209,7 +238,7 @@ with top_menu_cols[3]: st.button("CDP", width='stretch', type="primary" if st.se
 with top_menu_cols[4]: st.button("Acid", width='stretch', type="primary" if st.session_state.dye_mode == "Acid" else "secondary", on_click=set_dye_mode, args=("Acid",))
 
 # ==========================================
-# 5. 좌측 사이드바 (염료 리스트) - 엑셀 원본 순서 유지
+# 5. 좌측 사이드바 (염료 리스트)
 # ==========================================
 with st.sidebar:
     st.markdown("<h3 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>palette</span>염료 리스트</h3>", unsafe_allow_html=True)
@@ -268,35 +297,45 @@ def parse_qtx_content(content):
             else: batches.append(data_dict)
     return standards, batches
 
-# 🌟 CPB 모드일 때는 최대 농도 상한선을 150.0으로 넉넉하게 확장
-def calculate_smart_correction(std_ks, bat_ks_list, bat_recipes, std_initial_recipe, blank_ks_arr, dye_interpolators, mode):
+# 🌟 새로운 보정 연산 로직 (Datacolor 예상 처방 vs 실제 투입 레시피 대조)
+def calculate_advanced_correction(std_ks, bat_ks_list, bat_expected_recipes, bat_actual_recipes, blank_ks_arr, dye_interpolators, mode):
     num_dyes = len(dye_interpolators)
+    
+    # 각 염료별 발색 교정 계수(CF) 산출
     def cf_objective(cf_array):
         total_error = 0
         for i, bat_ks in enumerate(bat_ks_list):
             est_ks = np.copy(blank_ks_arr)
-            for j in range(num_dyes): est_ks += dye_interpolators[j](bat_recipes[i][j]) * cf_array[j]
+            # 현장에서 실제로 투입한 레시피에 발색 계수를 곱해 예상되는 실측 K/S 산출
+            for j in range(num_dyes): 
+                est_ks += dye_interpolators[j](bat_actual_recipes[i][j]) * cf_array[j]
             total_error += np.sum((bat_ks - est_ks)**2)
         return total_error
 
+    # CF 상한/하한을 부드럽게 설정 (0.5 ~ 1.5)
     res_cf = minimize(cf_objective, np.ones(num_dyes), bounds=[(0.5, 1.5) for _ in range(num_dyes)], method='SLSQP')
     optimal_cf = res_cf.x if res_cf.success else np.ones(num_dyes)
     
+    # 타겟(STD)을 맞추기 위한 최적 처방 산출
     def recipe_objective(recipe):
         est_ks = np.copy(blank_ks_arr)
-        for j in range(num_dyes): est_ks += dye_interpolators[j](recipe[j]) * optimal_cf[j]
+        for j in range(num_dyes): 
+            est_ks += dye_interpolators[j](recipe[j]) * optimal_cf[j]
         return np.sum((std_ks - est_ks)**2)
     
-    initial_recipe = std_initial_recipe if sum(std_initial_recipe) > 0 else np.mean(bat_recipes, axis=0)
-    
-    # 🌟 CPB는 최대 150.0 g/l, 나머지는 15.0% 한계 적용
+    initial_recipe = bat_expected_recipes[0] if len(bat_expected_recipes) > 0 else np.zeros(num_dyes)
     max_bound = 150.0 if mode == "Reactive (CPB)" else 15.0
+    
     res_recipe = minimize(recipe_objective, initial_recipe, bounds=[(0.0, max_bound) for _ in range(num_dyes)], method='SLSQP')
     
-    return {"success": res_recipe.success, "calibration_factors": optimal_cf, "final_recipe": res_recipe.x if res_recipe.success else None}
+    return {
+        "success": res_recipe.success, 
+        "calibration_factors": optimal_cf, 
+        "final_recipe": res_recipe.x if res_recipe.success else None
+    }
 
 
-# 🌟 메인 화면 좌/우 2분할
+# 🌟 메인 화면 좌/우 2분할 레이아웃
 col_input, col_result = st.columns([1, 1.2], gap="large")
 
 run_calc = False
@@ -304,14 +343,18 @@ active_batches = []
 std_data = None
 selected_raw_dyes = []
 selected_display_names = []
-input_values = []
+std_initial_recipe = []
+bat_expected_list = []
+bat_actual_list = []
+selected_light = "D65"
 
 # --- 왼쪽 컬럼 (입력부) ---
 with col_input:
-    st.markdown("### 1. 데이터 업로드")
+    st.markdown("### 1. 데이터 업로드 및 광원 선택")
     uploaded_file = st.file_uploader("QTX 파일 업로드 (STD & BAT 포함)", type=['qtx'])
+    selected_light = st.selectbox("보정 기준 광원 선택", options=list(LIGHT_MAP.keys()), index=0)
     
-    st.markdown("### 2. 레시피 입력")
+    st.markdown("### 2. 레시피 대조 입력")
     if uploaded_file and len(st.session_state.selected_dyes) > 0:
         content = uploaded_file.getvalue().decode('euc-kr', errors='ignore')
         standards, batches = parse_qtx_content(content)
@@ -332,20 +375,23 @@ with col_input:
                 selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
                 selected_display_names = [display_name_dict.get(d, d) for d in selected_raw_dyes]
                 
-                col_names = ["[STD] 예상 처방"] + [b['name'] for b in active_batches]
+                # 표 구성: 1열(STD 예상처방), 2열 이후(각 배치별 실제 투입량 입력 칸)
+                col_names = ["[STD] Datacolor 예상 처방"] + [f"[BAT] {b['name']} 실제 투입량" for b in active_batches]
                 df_input = pd.DataFrame(0.0, index=selected_display_names, columns=col_names)
                 
-                table_key = f"table_{'-'.join(selected_raw_dyes)}_{'-'.join(col_names)}"
+                table_key = f"adv_table_{'-'.join(selected_raw_dyes)}_{'-'.join(col_names)}"
                 
-                # 🌟 CPB 모드 여부에 따라 안내 문구 단위를 동적으로 변경 (%) 또는 (g/l)
                 unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                st.markdown(f"**염료별 초기 예상 처방(STD)과 실제 투입했던 배치의 농도({unit_label})를 입력하세요:**")
+                st.markdown(f"**Datacolor 예상 처방과 실제 현장 투입량({unit_label})을 입력하세요:**")
                 
                 edited_df = st.data_editor(df_input, use_container_width=True, key=table_key)
                 edited_df = edited_df.fillna(0.0)
                 
+                # 데이터 분리
                 std_initial_recipe = edited_df.iloc[:, 0].tolist()
-                bat_recipes = edited_df.iloc[:, 1:].T.values.tolist()
+                # 모든 배치에 동일한 Datacolor 예상 처방을 대조군으로 삼거나 각 배치별 예상 처방으로 확장 가능
+                bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
+                bat_actual_recipes = edited_df.iloc[:, 1:].T.values.tolist()
                 
                 run_calc = st.button("🚀 정밀 보정 계산 시작", type="primary", use_container_width=True)
             else:
@@ -377,15 +423,14 @@ with col_result:
             
             bat_ks_list = [b['ks_31'] for b in active_batches]
             
-            # 🌟 모드 인자 전달
-            result = calculate_smart_correction(
-                std_data['ks_31'], bat_ks_list, bat_recipes, std_initial_recipe, 
+            result = calculate_advanced_correction(
+                std_data['ks_31'], bat_ks_list, bat_expected_recipes, bat_actual_recipes, 
                 blank_ks, dye_interpolators, st.session_state.dye_mode
             )
             
             if result['success']:
                 with st.container(border=True):
-                    st.markdown("#### 1. 현장 염료 발색 상태 (Calibration Factor)")
+                    st.markdown(f"#### 1. 광원 [{selected_light}] 기준 현장 염료 발색 상태 (Calibration Factor)")
                     cf_data = {display_name_dict.get(dye, dye): f"{cf*100:.1f}%" for dye, cf in zip(selected_raw_dyes, result['calibration_factors'])}
                     st.json(cf_data)
                 
@@ -398,8 +443,8 @@ with col_result:
                     
                     recipe_df = pd.DataFrame({
                         "염료명": selected_display_names,
-                        f"기존 예상 처방 ({unit_label})": [round(c, 4) for c in std_initial_recipe],
-                        f"최종 추천 처방 ({unit_label})": [round(c, 4) for c in final_recipe],
+                        f"Datacolor 예상 처방 ({unit_label})": [round(c, 4) for c in std_initial_recipe],
+                        f"최종 보정 추천 처방 ({unit_label})": [round(c, 4) for c in final_recipe],
                         f"증감량 (Add/Reduce) ({unit_label})": [round(d, 4) for d in delta_recipe]
                     })
                     
@@ -409,8 +454,8 @@ with col_result:
                     st.dataframe(
                         recipe_df.style.map(color_delta, subset=[f"증감량 (Add/Reduce) ({unit_label})"])
                                      .format({
-                                         f"기존 예상 처방 ({unit_label})": "{:.2f}", 
-                                         f"최종 추천 처방 ({unit_label})": "{:.2f}", 
+                                         f"Datacolor 예상 처방 ({unit_label})": "{:.2f}", 
+                                         f"최종 보정 추천 처방 ({unit_label})": "{:.2f}", 
                                          f"증감량 (Add/Reduce) ({unit_label})": "{:+.2f}"
                                      }), 
                         hide_index=True, 
