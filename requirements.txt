@@ -1,7 +1,8 @@
 streamlit
-pandas
 numpy
+pandas
 scipy
 colour-science
-openpyxl
+plotly
 pyperclip
+openpyxl

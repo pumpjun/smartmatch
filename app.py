@@ -274,7 +274,7 @@ class DyePredictor:
         if c <= self.max_c: return self.interpolator(c)
         else: return self.max_ks * (c / self.max_c)
 
-# 🌟 [수정] 원본 산출 프로그램의 방식을 100% 동일하게 심은 역산 스마트 매치 엔진
+# 🌟 [완벽 분리] STD(독립 산출)와 BAT(현장 앵커)의 목적을 철저히 분리한 스마트 매치 엔진
 def calculate_multi_batch_correction(std_ks, std_r_31, bat_ks_list, bat_r_31_list, bat_expected_recipes, bat_actual_recipes, blank_ks_arr, dye_predictors, mode, light_names):
     num_dyes = len(dye_predictors)
     shape_10nm = colour.SpectralShape(400, 700, 10)
@@ -299,7 +299,8 @@ def calculate_multi_batch_correction(std_ks, std_r_31, bat_ks_list, bat_r_31_lis
         wp_xy = colour.XYZ_to_xy(wp_XYZ)
         light_data_list.append({'W': W, 'wp_xy': wp_xy})
     
-    def predict_recipe_for_ks(target_ks, target_r_31, ref_recipe):
+    # 🌟 is_std 파라미터를 추가하여 STD와 BAT의 계산 방식을 완벽히 가름
+    def predict_recipe_for_ks(target_ks, target_r_31, ref_recipe, is_std=False):
         precalc_lights = []
         for i, ld in enumerate(light_data_list):
             XYZ_tgt = np.dot(target_r_31, ld['W'])
@@ -323,7 +324,7 @@ def calculate_multi_batch_correction(std_ks, std_r_31, bat_ks_list, bat_r_31_lis
         else:
             approx_conc = ref_recipe
 
-        def evaluate_lights_local(conc):
+        def objective(conc):
             total_ks_local = np.copy(blank_ks_arr)
             for j in range(num_dyes):
                 c = conc[j]
@@ -342,44 +343,46 @@ def calculate_multi_batch_correction(std_ks, std_r_31, bat_ks_list, bat_r_31_lis
             
             est_r_local = 1 + total_ks_local - np.sqrt(total_ks_local**2 + 2 * total_ks_local)
             
-            des = []
             l1_data = precalc_lights[0]
             XYZ_est_1 = np.dot(est_r_local, l1_data['W'])
             lab_est_1 = colour.XYZ_to_Lab(XYZ_est_1, illuminant=l1_data['wp_xy'])
-            lab_tgt_1 = l1_data['lab_tgt']
-            de_1 = colour.delta_E(lab_est_1, lab_tgt_1, method='CMC', l=2, c=1)
-            des.append(de_1)
-
+            de_1 = colour.delta_E(lab_est_1, l1_data['lab_tgt'], method='CMC', l=2, c=1)
+            
+            error = de_1
+            
             for idx_l in range(1, len(precalc_lights)):
                 ld = precalc_lights[idx_l]
                 XYZ_est = np.dot(est_r_local, ld['W'])
                 lab_est = colour.XYZ_to_Lab(XYZ_est, illuminant=ld['wp_xy'])
-                lab_est_corr = lab_est + (lab_tgt_1 - lab_est_1)
-                de = colour.delta_E(lab_est_corr, ld['lab_tgt'], method='CMC', l=2, c=1)
-                de = apply_dc_correction(light_names[idx_l], de)
-                des.append(de)
-            return des
+                lab_est_corr = lab_est + (l1_data['lab_tgt'] - lab_est_1)
+                de_meta = colour.delta_E(lab_est_corr, ld['lab_tgt'], method='CMC', l=2, c=1)
+                de_meta = apply_dc_correction(light_names[idx_l], de_meta)
+                error += 0.01 * de_meta
 
-        def objective(conc):
-            des = evaluate_lights_local(conc)
-            weight_obj = des[0]
-            if len(des) > 1: weight_obj += 0.01 * des[1]
-            if len(des) > 2: weight_obj += 0.01 * des[2]
-            weight_obj += 0.001 * np.sum((conc - ref_recipe)**2) 
-            return weight_obj
+            # 🌟 STD(타겟)과 BAT(현장)의 알고리즘 완벽 분리 적용
+            if is_std:
+                # STD 산출 시: 사용자의 표 입력값(ref_recipe)은 100% 무시! 
+                # Datacolor처럼 밸런스를 잡기 위한 nnls 기준 마이크로 패널티만 부과
+                error += 0.00001 * np.sum((conc - approx_conc)**2)
+            else:
+                # BAT 역산 시: 현장에서 실제로 넣은 투입 비율(ref_recipe)을 기반으로 역산 효율을 찾아야 함
+                error += 0.05 * np.sum((conc - ref_recipe)**2)
+                
+            return error
 
         max_bound = 300.0 if mode == "Reactive (CPB)" else 150.0
         bnds = [(0.0, max_bound) for _ in range(num_dyes)]
         x0_start = np.clip(approx_conc, 0.0, max_bound)
+        
         res = minimize(objective, x0=x0_start, bounds=bnds, method='SLSQP', options={'ftol': 1e-7, 'disp': False})
         return res.x
 
+    # --- 1. BAT 역산 (현장 효율 도출용 - is_std=False) ---
     cf_list = []
     calc_bat_recs = []
-    
     for i, bat_ks in enumerate(bat_ks_list):
         actual_rec = np.array(bat_actual_recipes[i])
-        calculated_bat_rec = predict_recipe_for_ks(bat_ks, bat_r_31_list[i], actual_rec)
+        calculated_bat_rec = predict_recipe_for_ks(bat_ks, bat_r_31_list[i], actual_rec, is_std=False)
         calc_bat_recs.append(calculated_bat_rec)
         
         batch_cfs = []
@@ -393,9 +396,12 @@ def calculate_multi_batch_correction(std_ks, std_r_31, bat_ks_list, bat_r_31_lis
         
     optimal_cf = np.mean(cf_list, axis=0) if cf_list else np.ones(num_dyes)
 
+    # --- 2. STD 역산 (순수 원본 산출용 - is_std=True) ---
     std_expected_rec = np.array(bat_expected_recipes[0]) if len(bat_expected_recipes) > 0 else np.zeros(num_dyes)
-    calc_std_rec = predict_recipe_for_ks(std_ks, std_r_31, std_expected_rec)
+    # 🌟 is_std=True 옵션을 주어 사용자의 입력값이 100% 무시되고 순수 광학 산출만 하도록 강제
+    calc_std_rec = predict_recipe_for_ks(std_ks, std_r_31, std_expected_rec, is_std=True)
     
+    # --- 3. 최종 보정 추천 처방 산출 ---
     final_recipe = []
     for j in range(num_dyes):
         final_val = calc_std_rec[j] / optimal_cf[j] if optimal_cf[j] > 0 else calc_std_rec[j]
@@ -409,7 +415,6 @@ def calculate_multi_batch_correction(std_ks, std_r_31, bat_ks_list, bat_r_31_lis
         "calc_std_rec": calc_std_rec,
         "calc_bat_recs": calc_bat_recs
     }
-
 # ==========================================
 # 4.5 백포 선택 팝업 (Disperse 전용)
 # ==========================================
@@ -549,23 +554,159 @@ with col_menu:
 with col_results:
     st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>analytics</span>정밀 분석 및 보정 추천 처방", unsafe_allow_html=True)
     
+    # 🌟 [UI 완벽 구현] Datacolor 스타일 Delta 표 및 대칭/직관적 인터랙티브 그래프 🌟
     if uploaded_file and 'standards' in locals() and 'batches' in locals() and standards and batches:
+        import plotly.graph_objects as go
+        
         std_data_res = standards[0]
-        de_records = []
-        for b in batches:
-            rec = {"배치(BAT) 명칭": b['name']}
-            for l_name in [light1_name, light2_name, light3_name]:
-                if l_name != "없음":
-                    lab_est = calculate_lab_exact(b['r_35'][4:35], l_name)
-                    lab_tgt = calculate_lab_exact(std_data_res['r_35'][4:35], l_name)
-                    de_val = colour.delta_E(lab_est, lab_tgt, method='CMC', l=2, c=1)
-                    de_val = apply_dc_correction(l_name, de_val)
-                    rec[f"dE [{l_name}]"] = round(de_val, 2)
-            de_records.append(rec)
+        
+        if 'selected_bat_names' in locals() and selected_bat_names:
+            active_batches_for_view = [b for b in batches if b['name'] in selected_bat_names]
+        else:
+            active_batches_for_view = batches
             
         with st.container(border=True):
-            st.markdown("#### 📊 타겟(STD) 대비 배치별 실제 색차(dE) 분석")
-            st.dataframe(pd.DataFrame(de_records), hide_index=True, use_container_width=True)
+            st.markdown("#### 📊 타겟(STD) vs 현장(BAT) 색상 차이 분석")
+            
+            plot_data = [] # 그래프용 데이터 수집
+            active_lights = [l for l in [light1_name, light2_name, light3_name] if l != "없음"]
+            
+            # STD 기준 데이터 
+            std_lab_1 = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
+            
+            # 1️⃣ 인터랙티브 Da* vs Db* 그래프 (Plotly) - 원점 중앙 고정!
+            st.markdown(f"**1️⃣ 색상 오차 (Da* vs Db*) 분포도 - [{active_lights[0]} 기준]**")
+            
+            fig = go.Figure()
+            
+            # STD 별표 마커 추가 (정중앙 0,0)
+            fig.add_trace(go.Scatter(
+                x=[0], y=[0],
+                mode='markers+text',
+                marker=dict(symbol='star', size=18, color='#d32f2f', line=dict(width=1, color='black')),
+                name='STD (Target)',
+                text=['STD (0,0)'], textposition="top right", textfont=dict(color='#d32f2f', size=14, weight='bold')
+            ))
+            
+            colors = ['#1976d2', '#388e3c', '#f57c00', '#7b1fa2', '#0097a7']
+            max_val = 0.5 # 그래프가 너무 작아지지 않게 기본 최소 범위(0.5) 설정
+            
+            # BAT 오차(Delta) 계산 및 그래프 범위 찾기
+            for b in active_batches_for_view:
+                b_name = b['name']
+                bat_lab_1 = calculate_lab_exact(b['r_35'][4:35], active_lights[0])
+                da = bat_lab_1[1] - std_lab_1[1]
+                db = bat_lab_1[2] - std_lab_1[2]
+                plot_data.append({"name": b_name, "da": da, "db": db})
+                
+                # 가장 멀리 떨어진 점을 찾아서 양쪽 대칭 범위를 맞춤
+                max_val = max(max_val, abs(da), abs(db))
+            
+            max_range = max_val * 1.2 # 점이 가장자리에 붙지 않게 20% 여백 추가
+            
+            # BAT 원형 마커 추가
+            for idx, p in enumerate(plot_data):
+                c = colors[idx % len(colors)]
+                fig.add_trace(go.Scatter(
+                    x=[p['da']], y=[p['db']],
+                    mode='markers+text',
+                    marker=dict(symbol='circle', size=12, color=c, line=dict(width=1, color='black')),
+                    name=f"{p['name']}",
+                    text=[p['name']], textposition="bottom center", textfont=dict(color=c, size=13, weight='bold')
+                ))
+            
+            # 🌟 [요청사항 반영] 상하좌우 직관적인 방향 가이드라인 텍스트 추가 🌟
+            fig.add_annotation(x=0, y=max_range*0.95, text="<b>↑ 위: Yellower (Db* +)</b>", showarrow=False, font=dict(color="#f57c00", size=14), xanchor="center", yanchor="top")
+            fig.add_annotation(x=0, y=-max_range*0.95, text="<b>↓ 밑: Bluer (Db* -)</b>", showarrow=False, font=dict(color="#1976d2", size=14), xanchor="center", yanchor="bottom")
+            fig.add_annotation(x=-max_range*0.95, y=0.03, text="<b>← 왼쪽: Greener (Da* -)</b>", showarrow=False, font=dict(color="#388e3c", size=14), xanchor="left", yanchor="bottom")
+            fig.add_annotation(x=max_range*0.95, y=0.03, text="<b>오른쪽: Redder (Da* +) →</b>", showarrow=False, font=dict(color="#d32f2f", size=14), xanchor="right", yanchor="bottom")
+            
+            # 그래프 대칭 설정 및 레이아웃 정리
+            fig.update_layout(
+                xaxis_title="<b>Da* (적/녹 방향)</b>",
+                yaxis_title="<b>Db* (황/청 방향)</b>",
+                hovermode="closest",
+                margin=dict(l=20, r=20, t=30, b=20),
+                height=500,
+                plot_bgcolor='white',
+                # x축, y축 범위를 동일한 쁠마(-, +) 수치로 강제하여 (0,0)을 무조건 십자선 정중앙에 고정!
+                xaxis=dict(range=[-max_range, max_range], showgrid=True, gridcolor='#eaeaea', zeroline=True, zerolinewidth=2, zerolinecolor='rgba(0,0,0,0.2)'),
+                yaxis=dict(range=[-max_range, max_range], showgrid=True, gridcolor='#eaeaea', zeroline=True, zerolinewidth=2, zerolinecolor='rgba(0,0,0,0.2)')
+            )
+            
+            # 확대/축소 가능한 반응형 그래프 렌더링
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': True})
+            st.caption("※ 마우스 휠로 확대/축소, 클릭 & 드래그로 이동이 가능합니다. 정중앙 타겟을 기준으로 색이 어느 방향으로 틀어졌는지 보여줍니다.")
+            
+            # 2️⃣ Datacolor 스타일 광원별 오차(Delta) 표 렌더링
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+            st.markdown("**2️⃣ Datacolor 산출 비교표 (광원별 오차값)**")
+            
+            for b in active_batches_for_view:
+                b_name = b['name']
+                batch_records = []
+                
+                # 메타메리즘 보정을 위한 기준 광원(첫 번째 광원) 값 저장
+                std_lab_base = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
+                bat_lab_base = calculate_lab_exact(b['r_35'][4:35], active_lights[0])
+                
+                for idx_l, l_name in enumerate(active_lights):
+                    std_lab = calculate_lab_exact(std_data_res['r_35'][4:35], l_name)
+                    bat_lab = calculate_lab_exact(b['r_35'][4:35], l_name)
+                    
+                    DL = bat_lab[0] - std_lab[0]
+                    Da = bat_lab[1] - std_lab[1]
+                    Db = bat_lab[2] - std_lab[2]
+                    
+                    std_C = np.sqrt(std_lab[1]**2 + std_lab[2]**2)
+                    bat_C = np.sqrt(bat_lab[1]**2 + bat_lab[2]**2)
+                    DC = bat_C - std_C
+                    
+                    DE_76 = np.sqrt(DL**2 + Da**2 + Db**2)
+                    
+                    # DH* 계산 (CIE 기준)
+                    val_for_dh2 = Da**2 + Db**2 - DC**2
+                    DH_mag = np.sqrt(max(0, val_for_dh2))
+                    
+                    std_h = np.degrees(np.arctan2(std_lab[2], std_lab[1])) % 360
+                    bat_h = np.degrees(np.arctan2(bat_lab[2], bat_lab[1])) % 360
+                    dh = bat_h - std_h
+                    if dh > 180: dh -= 360
+                    if dh < -180: dh += 360
+                    DH = DH_mag if dh >= 0 else -DH_mag
+                    
+                    # CMC dE
+                    cmc_de = colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1)
+                    cmc_de = apply_dc_correction(l_name, cmc_de)
+                    
+                    # MI (메타메리즘 인덱스) - 2번째 광원부터 계산
+                    mi_str = ""
+                    if idx_l > 0:
+                        lab_est_corr = bat_lab + (std_lab_base - bat_lab_base)
+                        mi_val = colour.delta_E(lab_est_corr, std_lab, method='CMC', l=2, c=1)
+                        mi_val = apply_dc_correction(l_name, mi_val)
+                        mi_str = f"{mi_val:.2f}"
+                        
+                    batch_records.append({
+                        "Ill/Obs": l_name,
+                        "DL*": f"{DL:.2f}",
+                        "Da*": f"{Da:.2f}",
+                        "Db*": f"{Db:.2f}",
+                        "DC*": f"{DC:.2f}",
+                        "DH*": f"{DH:.2f}",
+                        "DE*": f"{DE_76:.2f}",
+                        "CMC DE*": f"{cmc_de:.2f}",
+                        "MI": mi_str
+                    })
+                
+                st.markdown(f"🔹 **{b_name}**")
+                # DataFrame 출력
+                df_table = pd.DataFrame(batch_records)
+                st.dataframe(df_table, hide_index=True, use_container_width=True)
+
+    # =========================================================================
+    # (이 아래부터는 기존의 "if run_calc and edited_df is not None:" 코드가 이어집니다.)
+
 
     if run_calc and edited_df is not None:
         std_data = standards[0]
