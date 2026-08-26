@@ -4,3 +4,4 @@ numpy
 scipy
 colour-science
 openpyxl
+pyperclip
