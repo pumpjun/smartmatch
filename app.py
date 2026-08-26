@@ -499,10 +499,14 @@ with st.sidebar:
         st.button(display_name, key=f"dye_{raw_name}_{idx}", use_container_width=True, type=btn_type, on_click=toggle_dye, args=(raw_name,))
 
 # ------------------------------------------
-# 메인 화면 구성
+# 메인 화면 구성 (3분할 레이아웃)
 # ------------------------------------------
-col_menu, col_results = st.columns([1.2, 2], gap="large")
+# 🌟 [수정] 화면을 좌측(메뉴/입력), 중앙(그래프/데이터), 우측(역산/최종결과) 3개로 분할
+col_menu, col_graph, col_results = st.columns([1, 1.3, 1.3], gap="medium")
 
+# =======================================================
+# 📌 [좌측] 1. 광원 설정, 업로드 및 BAT 입력 
+# =======================================================
 with col_menu:
     with st.container(border=True):
         st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>settings</span>광원 설정</strong>", unsafe_allow_html=True)
@@ -510,13 +514,13 @@ with col_menu:
         light_options_optional = ["없음"] + light_options_all
         
         l_col1, l_col2, l_col3 = st.columns(3)
-        light1_name = l_col1.selectbox("1차 광원", light_options_all, key="l1", index=light_options_all.index("D65"))
-        light2_name = l_col2.selectbox("2차 광원", light_options_optional, key="l2", index=light_options_optional.index("CWF (F02)")) 
-        light3_name = l_col3.selectbox("3차 광원", light_options_optional, key="l3", index=light_options_optional.index("없음")) 
+        light1_name = l_col1.selectbox("1차", light_options_all, key="l1", index=light_options_all.index("D65"))
+        light2_name = l_col2.selectbox("2차", light_options_optional, key="l2", index=light_options_optional.index("CWF (F02)")) 
+        light3_name = l_col3.selectbox("3차", light_options_optional, key="l3", index=light_options_optional.index("없음")) 
 
     with st.container(border=True):
-        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>타겟 업로드 및 대조 입력</strong>", unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("QTX 파일 업로드 (STD & BAT 포함)", type=['qtx'], label_visibility="collapsed")
+        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>타겟 업로드 및 현장 투입량 입력</strong>", unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("QTX 파일 업로드", type=['qtx'], label_visibility="collapsed")
         
         edited_df = None
         if uploaded_file and len(st.session_state.selected_dyes) > 0:
@@ -529,15 +533,17 @@ with col_menu:
             if standards and batches:
                 st.success(f"🎯 타겟(STD): **{standards[0]['name']}**")
                 all_bat_names = [b['name'] for b in batches]
-                selected_bat_names = st.multiselect("대조 분석에 사용할 BATCH 선택", options=all_bat_names, default=[all_bat_names[0]])
+                selected_bat_names = st.multiselect("분석할 현장(BAT) 선택", options=all_bat_names, default=[all_bat_names[0]])
                 
                 if selected_bat_names:
                     selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
-                    col_names = ["[STD] 예상 처방"] + [f"[BAT] {b_name} 실제 투입량" for b_name in selected_bat_names]
+                    
+                    # 🌟 [수정] STD 입력칸 삭제 및 헤더 텍스트 간소화 (BAT 이름만 표기)
+                    col_names = [b_name for b_name in selected_bat_names]
                     df_input = pd.DataFrame(0.0, index=[display_name_dict.get(d, d) for d in selected_raw_dyes], columns=col_names)
                     
                     unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                    st.caption(f"※ 표에 처방({unit_label})을 입력한 후 빈 곳을 클릭하여 값을 확정하세요.")
+                    st.caption(f"※ 각 배치의 실제 투입량({unit_label})을 입력하세요.")
                     edited_df = st.data_editor(df_input, use_container_width=True)
                     run_calc = st.button("🚀 역산 기반 정밀 보정 시작", type="primary", use_container_width=True)
                 else:
@@ -551,102 +557,69 @@ with col_menu:
             elif len(st.session_state.selected_dyes) == 0: st.warning("사이드바에서 처방에 사용된 염료를 선택해 주세요.")
             run_calc = False
 
-with col_results:
-    st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>analytics</span>정밀 분석 및 보정 추천 처방", unsafe_allow_html=True)
+# =======================================================
+# 📌 [중앙] 2. 색상 좌표(그래프) 및 Delta 데이터 표 
+# =======================================================
+with col_graph:
+    st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>monitoring</span>타겟 vs 현장 분석", unsafe_allow_html=True)
     
-    # 🌟 [UI 완벽 구현] Datacolor 스타일 Delta 표 및 대칭/직관적 인터랙티브 그래프 🌟
     if uploaded_file and 'standards' in locals() and 'batches' in locals() and standards and batches:
         import plotly.graph_objects as go
-        
         std_data_res = standards[0]
+        active_batches_for_view = [b for b in batches if b['name'] in selected_bat_names] if ('selected_bat_names' in locals() and selected_bat_names) else batches
+        active_lights = [l for l in [light1_name, light2_name, light3_name] if l != "없음"]
         
-        if 'selected_bat_names' in locals() and selected_bat_names:
-            active_batches_for_view = [b for b in batches if b['name'] in selected_bat_names]
-        else:
-            active_batches_for_view = batches
-            
         with st.container(border=True):
-            st.markdown("#### 📊 타겟(STD) vs 현장(BAT) 색상 차이 분석")
-            
-            plot_data = [] # 그래프용 데이터 수집
-            active_lights = [l for l in [light1_name, light2_name, light3_name] if l != "없음"]
-            
-            # STD 기준 데이터 
-            std_lab_1 = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
-            
-            # 1️⃣ 인터랙티브 Da* vs Db* 그래프 (Plotly) - 원점 중앙 고정!
             st.markdown(f"**1️⃣ 색상 오차 (Da* vs Db*) 분포도 - [{active_lights[0]} 기준]**")
-            
+            std_lab_1 = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
             fig = go.Figure()
             
-            # STD 별표 마커 추가 (정중앙 0,0)
+            fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
+            fig.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.7)
             fig.add_trace(go.Scatter(
-                x=[0], y=[0],
-                mode='markers+text',
+                x=[0], y=[0], mode='markers+text',
                 marker=dict(symbol='star', size=18, color='#d32f2f', line=dict(width=1, color='black')),
-                name='STD (Target)',
-                text=['STD (0,0)'], textposition="top right", textfont=dict(color='#d32f2f', size=14, weight='bold')
+                name='STD (Target)', text=['STD (0,0)'], textposition="top right", textfont=dict(color='#d32f2f', size=14, weight='bold')
             ))
             
             colors = ['#1976d2', '#388e3c', '#f57c00', '#7b1fa2', '#0097a7']
-            max_val = 0.5 # 그래프가 너무 작아지지 않게 기본 최소 범위(0.5) 설정
+            max_val = 0.5 
+            plot_data = []
             
-            # BAT 오차(Delta) 계산 및 그래프 범위 찾기
             for b in active_batches_for_view:
-                b_name = b['name']
                 bat_lab_1 = calculate_lab_exact(b['r_35'][4:35], active_lights[0])
                 da = bat_lab_1[1] - std_lab_1[1]
                 db = bat_lab_1[2] - std_lab_1[2]
-                plot_data.append({"name": b_name, "da": da, "db": db})
-                
-                # 가장 멀리 떨어진 점을 찾아서 양쪽 대칭 범위를 맞춤
+                plot_data.append({"name": b['name'], "da": da, "db": db})
                 max_val = max(max_val, abs(da), abs(db))
             
-            max_range = max_val * 1.2 # 점이 가장자리에 붙지 않게 20% 여백 추가
+            max_range = max_val * 1.2 
             
-            # BAT 원형 마커 추가
             for idx, p in enumerate(plot_data):
                 c = colors[idx % len(colors)]
                 fig.add_trace(go.Scatter(
-                    x=[p['da']], y=[p['db']],
-                    mode='markers+text',
+                    x=[p['da']], y=[p['db']], mode='markers+text',
                     marker=dict(symbol='circle', size=12, color=c, line=dict(width=1, color='black')),
-                    name=f"{p['name']}",
-                    text=[p['name']], textposition="bottom center", textfont=dict(color=c, size=13, weight='bold')
+                    name=f"{p['name']}", text=[p['name']], textposition="bottom center", textfont=dict(color=c, size=13, weight='bold')
                 ))
             
-            # 🌟 [요청사항 반영] 상하좌우 직관적인 방향 가이드라인 텍스트 추가 🌟
-            fig.add_annotation(x=0, y=max_range*0.95, text="<b>↑ 위: Yellower (Db* +)</b>", showarrow=False, font=dict(color="#f57c00", size=14), xanchor="center", yanchor="top")
-            fig.add_annotation(x=0, y=-max_range*0.95, text="<b>↓ 밑: Bluer (Db* -)</b>", showarrow=False, font=dict(color="#1976d2", size=14), xanchor="center", yanchor="bottom")
-            fig.add_annotation(x=-max_range*0.95, y=0.03, text="<b>← 왼쪽: Greener (Da* -)</b>", showarrow=False, font=dict(color="#388e3c", size=14), xanchor="left", yanchor="bottom")
-            fig.add_annotation(x=max_range*0.95, y=0.03, text="<b>오른쪽: Redder (Da* +) →</b>", showarrow=False, font=dict(color="#d32f2f", size=14), xanchor="right", yanchor="bottom")
+            fig.add_annotation(x=0, y=max_range*0.95, text="<b>↑ Yellower (Db* +)</b>", showarrow=False, font=dict(color="#f57c00", size=12))
+            fig.add_annotation(x=0, y=-max_range*0.95, text="<b>↓ Bluer (Db* -)</b>", showarrow=False, font=dict(color="#1976d2", size=12))
+            fig.add_annotation(x=-max_range*0.95, y=0.03, text="<b>← Greener (Da* -)</b>", showarrow=False, font=dict(color="#388e3c", size=12), xanchor="left")
+            fig.add_annotation(x=max_range*0.95, y=0.03, text="<b>Redder (Da* +) →</b>", showarrow=False, font=dict(color="#d32f2f", size=12), xanchor="right")
             
-            # 그래프 대칭 설정 및 레이아웃 정리
             fig.update_layout(
-                xaxis_title="<b>Da* (적/녹 방향)</b>",
-                yaxis_title="<b>Db* (황/청 방향)</b>",
-                hovermode="closest",
-                margin=dict(l=20, r=20, t=30, b=20),
-                height=500,
-                plot_bgcolor='white',
-                # x축, y축 범위를 동일한 쁠마(-, +) 수치로 강제하여 (0,0)을 무조건 십자선 정중앙에 고정!
+                xaxis_title="Da* (적/녹 방향)", yaxis_title="Db* (황/청 방향)", hovermode="closest",
+                margin=dict(l=10, r=10, t=10, b=10), height=350, plot_bgcolor='white',
                 xaxis=dict(range=[-max_range, max_range], showgrid=True, gridcolor='#eaeaea', zeroline=True, zerolinewidth=2, zerolinecolor='rgba(0,0,0,0.2)'),
-                yaxis=dict(range=[-max_range, max_range], showgrid=True, gridcolor='#eaeaea', zeroline=True, zerolinewidth=2, zerolinecolor='rgba(0,0,0,0.2)')
+                yaxis=dict(range=[-max_range, max_range], showgrid=True, gridcolor='#eaeaea', zeroline=True, zerolinewidth=2, zerolinecolor='rgba(0,0,0,0.2)'),
+                showlegend=False
             )
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': True})
             
-            # 확대/축소 가능한 반응형 그래프 렌더링
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': True})
-            st.caption("※ 마우스 휠로 확대/축소, 클릭 & 드래그로 이동이 가능합니다. 정중앙 타겟을 기준으로 색이 어느 방향으로 틀어졌는지 보여줍니다.")
-            
-            # 2️⃣ Datacolor 스타일 광원별 오차(Delta) 표 렌더링
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
             st.markdown("**2️⃣ Datacolor 산출 비교표 (광원별 오차값)**")
-            
             for b in active_batches_for_view:
-                b_name = b['name']
                 batch_records = []
-                
-                # 메타메리즘 보정을 위한 기준 광원(첫 번째 광원) 값 저장
                 std_lab_base = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
                 bat_lab_base = calculate_lab_exact(b['r_35'][4:35], active_lights[0])
                 
@@ -658,69 +631,51 @@ with col_results:
                     Da = bat_lab[1] - std_lab[1]
                     Db = bat_lab[2] - std_lab[2]
                     
-                    std_C = np.sqrt(std_lab[1]**2 + std_lab[2]**2)
-                    bat_C = np.sqrt(bat_lab[1]**2 + bat_lab[2]**2)
-                    DC = bat_C - std_C
-                    
+                    DC = np.sqrt(bat_lab[1]**2 + bat_lab[2]**2) - np.sqrt(std_lab[1]**2 + std_lab[2]**2)
                     DE_76 = np.sqrt(DL**2 + Da**2 + Db**2)
                     
-                    # DH* 계산 (CIE 기준)
-                    val_for_dh2 = Da**2 + Db**2 - DC**2
-                    DH_mag = np.sqrt(max(0, val_for_dh2))
-                    
-                    std_h = np.degrees(np.arctan2(std_lab[2], std_lab[1])) % 360
-                    bat_h = np.degrees(np.arctan2(bat_lab[2], bat_lab[1])) % 360
-                    dh = bat_h - std_h
+                    DH_mag = np.sqrt(max(0, Da**2 + Db**2 - DC**2))
+                    dh = (np.degrees(np.arctan2(bat_lab[2], bat_lab[1])) % 360) - (np.degrees(np.arctan2(std_lab[2], std_lab[1])) % 360)
                     if dh > 180: dh -= 360
                     if dh < -180: dh += 360
                     DH = DH_mag if dh >= 0 else -DH_mag
                     
-                    # CMC dE
-                    cmc_de = colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1)
-                    cmc_de = apply_dc_correction(l_name, cmc_de)
+                    cmc_de = apply_dc_correction(l_name, colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1))
                     
-                    # MI (메타메리즘 인덱스) - 2번째 광원부터 계산
                     mi_str = ""
                     if idx_l > 0:
                         lab_est_corr = bat_lab + (std_lab_base - bat_lab_base)
-                        mi_val = colour.delta_E(lab_est_corr, std_lab, method='CMC', l=2, c=1)
-                        mi_val = apply_dc_correction(l_name, mi_val)
-                        mi_str = f"{mi_val:.2f}"
+                        mi_str = f"{apply_dc_correction(l_name, colour.delta_E(lab_est_corr, std_lab, method='CMC', l=2, c=1)):.2f}"
                         
                     batch_records.append({
-                        "Ill/Obs": l_name,
-                        "DL*": f"{DL:.2f}",
-                        "Da*": f"{Da:.2f}",
-                        "Db*": f"{Db:.2f}",
-                        "DC*": f"{DC:.2f}",
-                        "DH*": f"{DH:.2f}",
-                        "DE*": f"{DE_76:.2f}",
-                        "CMC DE*": f"{cmc_de:.2f}",
-                        "MI": mi_str
+                        "Ill/Obs": l_name, "DL*": f"{DL:.2f}", "Da*": f"{Da:.2f}", "Db*": f"{Db:.2f}",
+                        "DC*": f"{DC:.2f}", "DH*": f"{DH:.2f}", "DE*": f"{DE_76:.2f}", "CMC DE*": f"{cmc_de:.2f}", "MI": mi_str
                     })
                 
-                st.markdown(f"🔹 **{b_name}**")
-                # DataFrame 출력
-                df_table = pd.DataFrame(batch_records)
-                st.dataframe(df_table, hide_index=True, use_container_width=True)
+                st.markdown(f"🔹 **{b['name']}**")
+                st.dataframe(pd.DataFrame(batch_records), hide_index=True, use_container_width=True)
 
-    # =========================================================================
-    # (이 아래부터는 기존의 "if run_calc and edited_df is not None:" 코드가 이어집니다.)
-
-
+# =======================================================
+# 📌 [우측] 3. 역산 분석 및 보정 추천 처방
+# =======================================================
+with col_results:
+    st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>science</span>역산 및 최종 처방", unsafe_allow_html=True)
+    
     if run_calc and edited_df is not None:
         std_data = standards[0]
         active_batches = [b for b in batches if b['name'] in selected_bat_names]
         
         edited_df = edited_df.fillna(0.0)
-        std_initial_recipe = [float(val) for val in edited_df.iloc[:, 0].tolist()]
-        bat_expected_recipes = [std_initial_recipe for _ in range(len(active_batches))]
         
+        # 🌟 [수정] 표가 BAT 전용으로 바뀌었으므로 컬럼 0부터 긁어옴
         bat_actual_recipes = []
-        for col_idx in range(1, edited_df.shape[1]):
+        for col_idx in range(edited_df.shape[1]):
             bat_actual_recipes.append([float(val) for val in edited_df.iloc[:, col_idx].tolist()])
             
-        with st.spinner("스마트 매칭: 이론 역산 및 실측 데이터 대조 최적화 중..."):
+        # 더미 예상 처방 세팅 (계산엔 영향을 안 줌)
+        bat_expected_recipes = [bat_actual_recipes[0] for _ in range(len(active_batches))]
+        
+        with st.spinner("스마트 매칭 분석 중..."):
             dye_predictors = []
             blank_ks_31 = blank_ks[4:35]
             
@@ -736,7 +691,6 @@ with col_results:
                     sorted_items = sorted(conc_data[c_key].items(), key=lambda x: int(x[0]))
                     normalized_vals = np.interp(target_wls, np.array([int(k) for k, v in sorted_items]), np.array([float(v) for k, v in sorted_items]))
                     ks_matrix.append(np.maximum(get_ks(normalized_vals) - blank_ks_31, 0))
-                
                 dye_predictors.append(DyePredictor(concs_array, ks_matrix))
             
             active_lights = [light1_name]
@@ -751,61 +705,51 @@ with col_results:
             
             if result['success']:
                 with st.container(border=True):
-                    st.markdown(f"#### 1. 현장 염료 발색 상태 (배치별 역산 분석)")
-                    unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
+                    st.markdown(f"#### 1. 현장 발색 상태 (역산 분석)")
                     
-                    # 🌟 여러 개의 배치를 각각 따로 렌더링
                     for i, b_info in enumerate(active_batches):
                         b_name = b_info['name']
                         calc_bat_rec = result['calc_bat_recs'][i]
                         actual_bat_rec = bat_actual_recipes[i]
                         batch_cf = result['batch_cfs'][i]
                         
-                        st.markdown(f"**🔹 {b_name} 분석**")
-                        
+                        st.markdown(f"🔹 **{b_name} 효율 분석**")
                         batch_df = pd.DataFrame({
                             "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                            f"실제 투입 ({unit_label})": [round(c, 4) for c in actual_bat_rec],
-                            f"역산 산출 ({unit_label})": [round(c, 4) for c in calc_bat_rec],
-                            "단일 역산 효율": [f"{cf*100:.1f}%" for cf in batch_cf]
+                            f"실제 투입": [round(c, 4) for c in actual_bat_rec],
+                            f"역산 산출": [round(c, 4) for c in calc_bat_rec],
+                            "역산 효율": [f"{cf*100:.1f}%" for cf in batch_cf]
                         })
-                        
-                        st.dataframe(batch_df.style.format({
-                            f"실제 투입 ({unit_label})": "{:.2f}",
-                            f"역산 산출 ({unit_label})": "{:.2f}"
-                        }), hide_index=True, use_container_width=True)
+                        st.dataframe(batch_df.style.format({f"실제 투입": "{:.2f}", f"역산 산출": "{:.2f}"}), hide_index=True, use_container_width=True)
                     
                     st.markdown("---")
                     st.markdown("**💡 종합 적용 데이터**")
-                    
-                    # 종합 적용 데이터 렌더링
                     summary_df = pd.DataFrame({
                         "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                        f"타겟(STD) 역산 처방 ({unit_label})": [round(c, 4) for c in result['calc_std_rec']],
-                        "최종 적용 효율 (평균 CF)": [f"{cf*100:.1f}%" for cf in result['calibration_factors']]
+                        f"이론 역산 처방": [round(c, 4) for c in result['calc_std_rec']],
+                        "최종 반영 평균 효율": [f"{cf*100:.1f}%" for cf in result['calibration_factors']]
                     })
-                    
-                    st.dataframe(summary_df.style.format({
-                        f"타겟(STD) 역산 처방 ({unit_label})": "{:.2f}"
-                    }), hide_index=True, use_container_width=True)
-                    
-                    st.caption("※ **역산 산출**: 해당 배치의 측정 색상(K/S)을 내기 위해, 이론적으로 필요했던 처방량입니다.")
-                    st.caption("※ 2개 이상의 배치를 선택한 경우, 각 배치의 효율을 종합적으로 산출한 평균값을 최종 타겟 매칭에 반영합니다.")
+                    st.dataframe(summary_df.style.format({f"이론 역산 처방": "{:.2f}"}), hide_index=True, use_container_width=True)
                 
                 with st.container(border=True):
-                    st.markdown(f"#### 2. 🎯 타겟(STD) 매칭을 위한 최종 보정 추천 처방")
+                    st.markdown(f"#### 2. 🎯 타겟(STD) 매칭 최종 보정 추천 처방")
                     final_recipe = result['final_recipe']
+                    
+                    # 🌟 [수정] 증감량 기준을 첫 번째 배치의 실제 투입량으로 변경
+                    base_recipe = bat_actual_recipes[0] 
+                    base_name = active_batches[0]['name']
                     
                     recipe_df = pd.DataFrame({
                         "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                        f"예상 처방 ({unit_label})": [round(c, 4) for c in std_initial_recipe],
-                        f"최종 추천 처방 ({unit_label})": [round(c, 4) for c in final_recipe],
-                        f"증감량 ({unit_label})": [round(final - init, 4) for final, init in zip(final_recipe, std_initial_recipe)]
+                        f"기존 투입 ({base_name})": [round(c, 4) for c in base_recipe],
+                        f"최종 추천 처방": [round(c, 4) for c in final_recipe],
+                        f"증감량 ({unit_label})": [round(final - init, 4) for final, init in zip(final_recipe, base_recipe)]
                     })
                     
                     def color_delta(val): return f"color: {'#d32f2f' if val > 0 else ('#1976d2' if val < 0 else 'black')}; font-weight: bold;"
                     st.dataframe(recipe_df.style.map(color_delta, subset=[f"증감량 ({unit_label})"])
-                                 .format({f"예상 처방 ({unit_label})": "{:.2f}", f"최종 추천 처방 ({unit_label})": "{:.2f}", f"증감량 ({unit_label})": "{:+.2f}"}), 
+                                 .format({f"기존 투입 ({base_name})": "{:.2f}", f"최종 추천 처방": "{:.2f}", f"증감량 ({unit_label})": "{:+.2f}"}), 
                                  hide_index=True, use_container_width=True)
+                    st.caption(f"※ 증감량은 [{base_name}]의 투입량을 기준으로 최종 추천 처방의 차이를 계산한 것입니다.")
             else: 
                 st.error("보정 처방 산출에 실패했습니다.")
