@@ -540,11 +540,76 @@ with st.sidebar:
     st.markdown(f"<h3 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>palette</span>염료 리스트</h3>", unsafe_allow_html=True)
     if missing_dyes: st.warning(f"데이터 부족 제외 염료 {len(missing_dyes)}개", icon=":material/warning:")
     st.caption("클릭하여 선택 / 해제하세요.")
+    
+    # --- Ohyoung Dye Finder 텍스트 붙여넣기 기능 ---
+    pasted_text = st.text_input("복사한 텍스트를 붙여넣으세요 (Ctrl+V)", label_visibility="collapsed", placeholder="복사한 텍스트를 붙여넣으세요 (Ctrl+V)")
+    if st.button("Ohyoung Dye Finder에서 불러오기", use_container_width=True, type="primary"):
+        if pasted_text:
+            current_dye_db = load_dye_data(st.session_state.dye_mode)
+            current_all_dyes, _, _, _ = load_dye_mapping(st.session_state.dye_mode, current_dye_db.keys())
+            copied_names = [x.strip() for x in pasted_text.split(',')]
+            added_count = 0
+            for name in copied_names:
+                if not name: continue
+                for raw_name, display_name in current_all_dyes:
+                    if name == raw_name or name == display_name:
+                        if raw_name not in st.session_state.selected_dyes:
+                            st.session_state.selected_dyes.append(raw_name)
+                            added_count += 1
+                        break
+            if added_count > 0: st.success(f"성공적으로 {added_count}개의 염료를 추가했습니다!")
+            else: st.info("추가할 수 있는 새로운 염료가 없습니다 (이미 있거나 매칭 실패).")
+        else: st.warning("먼저 텍스트창에 복사한 내용을 붙여넣어 주세요.")
+            
     st.markdown("---")
     
-    for idx, (raw_name, display_name) in enumerate(all_dyes_ordered):
+    # --- 염료 검색 기능 ---
+    def clear_search(): st.session_state.search_query_input = ""
+    st.markdown(f"<div style='font-size: 14px; font-weight: bold; margin-bottom: 5px; display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:6px; font-size:18px;'>search</span>염료 검색</div>", unsafe_allow_html=True)
+    
+    col_search, col_clear = st.columns([7.5, 2.5], vertical_alignment="center")
+    with col_search:
+        search_query = st.text_input("염료 검색", placeholder="검색어 입력 후 Enter ↵", label_visibility="collapsed", key="search_query_input")
+    with col_clear:
+        st.button("초기화", use_container_width=True, on_click=clear_search)
+        
+    dye_hex_dict = get_all_dye_hex_dict(st.session_state.dye_mode)
+    filtered_dyes = []
+    
+    # 검색어 필터링 적용
+    for raw_name, display_name in all_dyes_ordered:
+        search_match = True
+        if search_query: 
+            search_match = (search_query.lower() in raw_name.lower()) or (search_query.lower() in display_name.lower())
+        if search_match: 
+            filtered_dyes.append((raw_name, display_name))
+            
+    # 사이드바 버튼 CSS 스타일링 적용
+    st.markdown("""
+    <style>
+        [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] div.stButton > button {
+            border: none !important; box-shadow: none !important; padding-left: 8px !important; height: 35px !important; min-height: 35px !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] div.stButton > button[kind="secondary"] { background-color: transparent !important; }
+        section[data-testid="stSidebar"] { min-width: 390px !important; }
+        [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] div.stButton > button[kind="secondary"]:hover { background-color: rgba(0,0,0,0.04) !important; }
+        [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] div.stButton > button div,
+        [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] div.stButton > button p {
+            display: flex !important; justify-content: flex-start !important; text-align: left !important; width: 100% !important; margin: 0 !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # 색상 칩과 버튼 렌더링
+    for idx, (raw_name, display_name) in enumerate(filtered_dyes):
         btn_type = "primary" if raw_name in st.session_state.selected_dyes else "secondary"
-        st.button(display_name, key=f"dye_{raw_name}_{idx}", use_container_width=True, type=btn_type, on_click=toggle_dye, args=(raw_name,))
+        hex_col = dye_hex_dict.get(raw_name, "#FFFFFF")
+        
+        col_color, col_btn = st.columns([0.7, 9.3], gap="small", vertical_alignment="center") 
+        with col_color:
+            st.markdown(f'''<div style="background-color: {hex_col}; height: 35px; width: 8px; border-radius: 4px; margin-top: -8px; float: right;"></div>''', unsafe_allow_html=True)
+        with col_btn:
+            st.button(display_name, key=f"dye_{raw_name}_{idx}", use_container_width=True, type=btn_type, on_click=toggle_dye, args=(raw_name,))
 
 # ------------------------------------------
 # 메인 화면 구성 (3분할 레이아웃)
