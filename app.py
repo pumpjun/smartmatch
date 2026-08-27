@@ -573,7 +573,7 @@ with st.sidebar:
         [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] div.stButton > button[kind="secondary"] { background-color: transparent !important; }
         
         /* 🔥 사이드바 넓이 축소 (기존 390px -> 310px) */
-        section[data-testid="stSidebar"] { min-width: 310px !important; max-width: 310px !important; } 
+        section[data-testid="stSidebar"] { min-width: 330px !important; max-width: 330px !important; } 
         
         [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] div.stButton > button[kind="secondary"]:hover { background-color: rgba(0,0,0,0.04) !important; }
         [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] div.stButton > button div,
