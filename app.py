@@ -218,6 +218,54 @@ blank_ks = get_ks(blank_r_reactive)
 # ==========================================
 # 4. 파싱 및 계산 로직
 # ==========================================
+
+def get_preview_hex(target_r_array, light_name):
+    shape_10nm = colour.SpectralShape(400, 700, 10)
+    cmfs = colour.MSDS_CMFS['CIE 1964 10 Degree Standard Observer'].copy().align(shape_10nm)
+    cmfs_values = cmfs.values
+    light_data = LIGHT_MAP[light_name]
+    if isinstance(light_data, tuple):
+        W_X = light_data[0].copy().align(shape_10nm).values
+        W_Y = light_data[1].copy().align(shape_10nm).values
+        W_Z = light_data[2].copy().align(shape_10nm).values
+        W = np.column_stack((W_X, W_Y, W_Z))
+    else:
+        light_spd = light_data.copy().align(shape_10nm)
+        light_values = light_spd.values
+        dw = 10
+        k = np.sum(light_values * cmfs_values[:, 1]) * dw
+        W = (light_values[:, np.newaxis] * cmfs_values) * dw / k
+        
+    wp_XYZ = np.sum(W, axis=0)
+    wp_xy = colour.XYZ_to_xy(wp_XYZ)
+    XYZ_tgt = np.dot(target_r_array, W)
+    RGB_viz = colour.XYZ_to_sRGB(XYZ_tgt, illuminant=wp_xy)
+    RGB_viz = np.clip(RGB_viz, 0, 1)
+    hex_col = "#{:02x}{:02x}{:02x}".format(int(RGB_viz[0]*255), int(RGB_viz[1]*255), int(RGB_viz[2]*255))
+    return hex_col, [int(RGB_viz[0]*255), int(RGB_viz[1]*255), int(RGB_viz[2]*255)]
+
+@st.cache_data
+def get_all_dye_hex_dict(dye_mode):
+    hex_dict = {}
+    try:
+        dye_data = load_dye_data(dye_mode)
+        for dye_name, conc_data in dye_data.items():
+            available_concs = sorted([float(k) for k in conc_data.keys() if float(k) > 0])
+            if not available_concs:
+                hex_dict[dye_name] = "#FFFFFF"
+                continue
+            max_c_key = [k for k in conc_data.keys() if float(k) == available_concs[-1]][0]
+            spectrum_map = conc_data[max_c_key]
+            target_wls = np.arange(400, 710, 10)
+            sorted_items = sorted(spectrum_map.items(), key=lambda x: int(x[0]))
+            existing_wls = np.array([int(k) for k, v in sorted_items])
+            existing_vals = np.array([float(v) for k, v in sorted_items])
+            r_array_31 = np.interp(target_wls, existing_wls, existing_vals)
+            hex_col, _ = get_preview_hex(r_array_31, "D65")
+            hex_dict[dye_name] = hex_col
+    except Exception: pass
+    return hex_dict
+
 def parse_qtx_blocks(content):
     standards = []
     blocks = re.split(r'\[(STANDARD_DATA|BATCH_DATA)[^\]]*\]', content)
