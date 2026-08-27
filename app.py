@@ -70,7 +70,7 @@ st.markdown(f"""
     [data-testid="collapsedControl"] {{ display: none !important; }}
     [data-testid="stSidebar"] div.stButton {{ margin-bottom: -10px; }}
     div[data-testid="stHorizontalBlock"]:has(#top-menu-marker) {{
-        position: fixed !important; top: 10px !important; left: 310px !important; 
+        position: fixed !important; top: 10px !important; left: 330px !important; 
         width: 820px !important; z-index: 999999 !important; align-items: center !important; 
     }}
     div.element-container:has(#top-menu-marker) {{ display: none !important; }}
