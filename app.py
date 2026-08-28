@@ -30,10 +30,12 @@ def get_gspread_client():
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    key_file_path = os.path.join(current_dir, "ohyoung-msds-app-83a2c20bc160.json")
     
-    creds = Credentials.from_service_account_file(key_file_path, scopes=scopes)
+    # 로컬 JSON 파일 대신 Streamlit Secrets에서 인증 정보를 딕셔너리로 불러옵니다.
+    credentials_info = dict(st.secrets["gcp_service_account"])
+    
+    # from_service_account_file 대신 from_service_account_info를 사용합니다.
+    creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
     return gspread.authorize(creds)
 
 @st.cache_data(ttl=600)
