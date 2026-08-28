@@ -4,5 +4,7 @@ pandas
 scipy
 colour-science
 plotly
-pyperclip
+gspread
+google-auth
 openpyxl
+pyperclip
