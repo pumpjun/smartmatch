@@ -27,7 +27,6 @@ def get_gspread_client():
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
-    # Streamlit Cloud 환경(Secrets 사용)과 로컬 환경(.json 파일 사용) 모두 지원
     if "gcp_service_account" in st.secrets:
         credentials_info = dict(st.secrets["gcp_service_account"])
         creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
@@ -63,8 +62,6 @@ def get_auxiliaries_from_sheet(total_conc):
         return float(aux_table[-1]['망초']), float(aux_table[-1]['소다회'])
     return 0.0, 0.0
 
-
-# 🌟 데이터베이스에 스마트매치 결과 및 L*a*b*C*h, DE_CMC 기록 함수 (A열부터 순서대로 정확히 저장되도록 수정)
 def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display_name_dict, bat_actual_recipes, std_data, dye_mode, primary_light):
     try:
         gc = get_gspread_client()
@@ -92,7 +89,6 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
             total_conc = sum(actual_bat_rec)
             salt_qty, alkali_qty = get_auxiliaries_from_sheet(total_conc)
             
-            # --- 색상 데이터 (L, a, b, C, h, DE) 계산 ---
             std_lab = calculate_lab_exact(std_data['r_35'][4:35], primary_light)
             bat_lab = calculate_lab_exact(b_info['r_35'][4:35], primary_light)
             
@@ -102,24 +98,10 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
             
             de_cmc = colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1)
             de_cmc = apply_dc_correction(primary_light, de_cmc)
-            # ---------------------------------------------
             
-            # 🌟 A열(작업번호)부터 N열(DE_CMC)까지 누락 없이 정확한 순서로 하나의 리스트로 결합
             master_rows_to_append.append([
-                job_id,                               # A열: 작업번호
-                date_str,                             # B열: 날짜
-                b_name,                               # C열: 배치명
-                std_data['name'],                     # D열: 타겟(STD)명
-                dye_mode,                             # E열: 염색모드
-                round(total_conc, 4),                 # F열: 총농도
-                salt_qty,                             # G열: 망초
-                alkali_qty,                           # H열: 소다회
-                round(L, 2),                          # I열: L*
-                round(a, 2),                          # J열: a*
-                round(b, 2),                          # K열: b*
-                round(C, 2),                          # L열: C*
-                round(h, 2),                          # M열: h
-                round(de_cmc, 2)                      # N열: DE_CMC
+                job_id, date_str, b_name, std_data['name'], dye_mode, round(total_conc, 4), salt_qty, alkali_qty,
+                round(L, 2), round(a, 2), round(b, 2), round(C, 2), round(h, 2), round(de_cmc, 2)
             ])
             
             for j, raw_dye_name in enumerate(selected_raw_dyes):
@@ -132,7 +114,6 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
                     job_id, dye_disp_name, expected_qty, actual_qty, eff_rate
                 ])
                 
-        # 🌟 구글 시트의 첫 번째 빈 행에 A열부터 데이터를 정확히 채워넣도록 지정
         ws_master.append_rows(master_rows_to_append, value_input_option='USER_ENTERED', table_range='A1')
         ws_detail.append_rows(detail_rows_to_append, value_input_option='USER_ENTERED', table_range='A1')
         
@@ -783,10 +764,11 @@ with col_graph:
             fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
             fig.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.7)
             
+            # 🌟 STD(타겟) 마커 크기를 BAT와 동일하게(size=12) 조정
             fig.add_trace(go.Scatter(
                 x=[0], y=[0], mode='markers+text',
-                marker=dict(symbol='circle', size=16, color='#000000', line=dict(width=1, color='#000000')),
-                name='STD (Target)', text=['STD (0,0)'], textposition="top right", textfont=dict(color='#000000', size=14, weight='bold')
+                marker=dict(symbol='circle', size=12, color='#000000', line=dict(width=1, color='#000000')),
+                name='STD (Target)', text=['STD (0,0)'], textposition="top right", textfont=dict(color='#000000', size=13, weight='bold')
             ))
             
             colors = ['#1976d2', '#388e3c', '#f57c00', '#7b1fa2', '#0097a7']
@@ -930,21 +912,18 @@ with col_results:
                     st.markdown("---")
                     st.markdown("#### 2. 최종 보정 처방 제안")
                     final_rec = result['final_recipe']
-                    total_final_conc = sum(final_rec)
-                    salt_q, alkali_q = get_auxiliaries_from_sheet(total_final_conc)
                     
                     final_df = pd.DataFrame({
                         "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
                         "보정 추천량 (%)": [round(c, 3) for c in final_rec]
                     })
                     st.dataframe(final_df.style.format({"보정 추천량 (%)": "{:.3f}"}), hide_index=True, use_container_width=True)
-                    st.info(f"⚖️ **자동 조제량 ➔ 망초: {salt_q} g/L / 소다회: {alkali_q} g/L**", icon=":material/water_drop:")
+                    # 🌟 자동 조제량 문구 및 안내 박스 제거 완료
                     
                     st.markdown("---")
                     st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>verified</span>데이터베이스(DB) 기록</h4>", unsafe_allow_html=True)
                     st.caption("컬러가 최종 패스(OK)된 배치인 경우에만 아래 버튼을 눌러 정답 데이터와 L*a*b* 색상 좌표를 클라우드 DB에 누적하세요.")
                     
-                    # 🌟 버튼 이름을 현장 용도에 맞게 명확히 수정했습니다!
                     if st.button("🚀 최종 패스(OK) 정답 데이터로 DB에 저장하기", type="primary", use_container_width=True):
                         with st.spinner("구글 시트에 정답 데이터를 기록하고 있습니다..."):
                             is_saved = save_to_google_sheet(
