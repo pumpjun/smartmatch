@@ -16,9 +16,6 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-# ==========================================
-# 0. 페이지 기본 설정 (항상 최상단에 위치)
-# ==========================================
 st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="T/S Smart Match", page_icon="logo.png")
 
 # ==========================================
@@ -30,12 +27,10 @@ def get_gspread_client():
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    key_file_path = os.path.join(current_dir, "ohyoung-msds-app-83a2c20bc160.json")
     
-    # 로컬 JSON 파일 대신 Streamlit Secrets에서 인증 정보를 딕셔너리로 불러옵니다.
-    credentials_info = dict(st.secrets["gcp_service_account"])
-    
-    # from_service_account_file 대신 from_service_account_info를 사용합니다.
-    creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
+    creds = Credentials.from_service_account_file(key_file_path, scopes=scopes)
     return gspread.authorize(creds)
 
 @st.cache_data(ttl=600)
@@ -64,7 +59,8 @@ def get_auxiliaries_from_sheet(total_conc):
         return float(aux_table[-1]['망초']), float(aux_table[-1]['소다회'])
     return 0.0, 0.0
 
-def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display_name_dict, bat_actual_recipes, std_name, dye_mode):
+# 🌟 [업데이트] 저장 함수에 L*a*b*C*h, DE_CMC 추출 로직 추가
+def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display_name_dict, bat_actual_recipes, std_data, dye_mode, primary_light):
     try:
         gc = get_gspread_client()
         spreadsheet_id = "19tvrWdTHkyT2xpmXd4EaWakuqU8DyX1utXOMl7rBcT4"
@@ -91,8 +87,21 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
             total_conc = sum(actual_bat_rec)
             salt_qty, alkali_qty = get_auxiliaries_from_sheet(total_conc)
             
+            # --- 색상 데이터 (L, a, b, C, h, DE) 계산 ---
+            std_lab = calculate_lab_exact(std_data['r_35'][4:35], primary_light)
+            bat_lab = calculate_lab_exact(b_info['r_35'][4:35], primary_light)
+            
+            L, a, b = bat_lab
+            C = np.sqrt(a**2 + b**2)
+            h = (np.degrees(np.arctan2(b, a)) % 360)
+            
+            de_cmc = colour.delta_E(bat_lab, std_lab, method='CMC', l=2, c=1)
+            de_cmc = apply_dc_correction(primary_light, de_cmc)
+            # ---------------------------------------------
+            
             master_rows_to_append.append([
-                job_id, date_str, b_name, std_name, dye_mode, round(total_conc, 4), salt_qty, alkali_qty
+                job_id, date_str, b_name, std_data['name'], dye_mode, round(total_conc, 4), salt_qty, alkali_qty,
+                round(L, 2), round(a, 2), round(b, 2), round(C, 2), round(h, 2), round(de_cmc, 2)
             ])
             
             for j, raw_dye_name in enumerate(selected_raw_dyes):
@@ -699,7 +708,7 @@ with col_menu:
         light3_name = l_col3.selectbox("3차", light_options_optional, key="l3", index=light_options_optional.index("없음")) 
 
     with st.container(border=True):
-        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>타겟 업로드 및 현장 투입량 입력</strong>", unsafe_allow_html=True)
+        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>최종 정답(QTX) 업로드 및 레시피 입력</strong>", unsafe_allow_html=True)
         uploaded_file = st.file_uploader("QTX 파일 업로드", type=['qtx'], label_visibility="collapsed")
         
         edited_df = None
@@ -713,7 +722,7 @@ with col_menu:
             if standards and batches:
                 st.success(f"타겟(STD): **{standards[0]['name']}**", icon=":material/my_location:")
                 all_bat_names = [b['name'] for b in batches]
-                selected_bat_names = st.multiselect("분석할 현장(BAT) 선택", options=all_bat_names, default=[all_bat_names[0]])
+                selected_bat_names = st.multiselect("최종 패스(OK)된 현장 배치를 선택하세요", options=all_bat_names, default=[all_bat_names[0]])
                 
                 if selected_bat_names:
                     selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
@@ -722,10 +731,10 @@ with col_menu:
                     df_input = pd.DataFrame(0.0, index=[display_name_dict.get(d, d) for d in selected_raw_dyes], columns=col_names)
                     
                     unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                    st.caption(f"※ 각 배치의 실제 투입량({unit_label})을 입력하세요.")
+                    st.caption(f"※ OK(패스)된 배치의 실제 레시피 투입량({unit_label})을 입력해 주세요.")
                     edited_df = st.data_editor(df_input, use_container_width=True)
                     
-                    if st.button("역산 기반 정밀 보정 시작", type="primary", use_container_width=True, icon=":material/rocket_launch:"):
+                    if st.button("정답 데이터 추출 (보정 및 시각화)", type="primary", use_container_width=True, icon=":material/rocket_launch:"):
                         st.session_state.run_calc = True
                 else:
                     st.warning("분석할 배치를 최소 1개 이상 선택해 주세요.", icon=":material/warning:")
@@ -758,7 +767,6 @@ with col_graph:
             fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
             fig.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.7)
             
-            # STD 마커 (검은색 원, 크기 조정)
             fig.add_trace(go.Scatter(
                 x=[0], y=[0], mode='markers+text',
                 marker=dict(symbol='circle', size=16, color='#000000', line=dict(width=1, color='#000000')),
@@ -780,7 +788,6 @@ with col_graph:
             
             for idx, p in enumerate(plot_data):
                 c = colors[idx % len(colors)]
-                # BAT 마커 (테두리 없음 width=0)
                 fig.add_trace(go.Scatter(
                     x=[p['da']], y=[p['db']], mode='markers+text',
                     marker=dict(symbol='circle', size=12, color=c, line=dict(width=0)),
@@ -887,7 +894,7 @@ with col_results:
             
             if result['success']:
                 with st.container(border=True):
-                    st.markdown(f"#### 1. 현장 발색 상태 (역산 분석)")
+                    st.markdown(f"#### 1. 정답 발색 상태 (역산 분석)")
                     
                     for i, b_info in enumerate(active_batches):
                         b_name = b_info['name']
@@ -898,63 +905,30 @@ with col_results:
                         st.markdown(f"<div style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:4px; font-size: 18px;'>arrow_right</span> <b>{b_name} 효율 분석</b></div>", unsafe_allow_html=True)
                         batch_df = pd.DataFrame({
                             "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                            f"실제 투입": [round(c, 4) for c in actual_bat_rec],
+                            f"정답 투입": [round(c, 4) for c in actual_bat_rec],
                             f"역산 산출": [round(c, 4) for c in calc_bat_rec],
                             "역산 효율": [f"{cf*100:.1f}%" for cf in batch_cf]
                         })
-                        st.dataframe(batch_df.style.format({f"실제 투입": "{:.2f}", f"역산 산출": "{:.2f}"}), hide_index=True, use_container_width=True)
+                        st.dataframe(batch_df.style.format({f"정답 투입": "{:.2f}", f"역산 산출": "{:.2f}"}), hide_index=True, use_container_width=True)
                     
                     st.markdown("---")
-                    st.markdown("<div style='display: flex; align-items: center; font-weight: bold;'><span class='material-symbols-outlined' style='margin-right:4px; font-size: 18px;'>lightbulb</span> 종합 적용 데이터</div>", unsafe_allow_html=True)
-                    summary_df = pd.DataFrame({
-                        "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                        f"이론 역산 처방": [round(c, 4) for c in result['calc_std_rec']],
-                        "최종 반영 평균 효율": [f"{cf*100:.1f}%" for cf in result['calibration_factors']]
-                    })
-                    st.dataframe(summary_df.style.format({f"이론 역산 처방": "{:.2f}"}), hide_index=True, use_container_width=True)
-                
-                with st.container(border=True):
-                    st.markdown(f"#### 2. 타겟(STD) 매칭 최종 보정 추천 처방")
-                    final_recipe = result['final_recipe']
+                    st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>verified</span>최종 정답(Golden Data) 학습</h4>", unsafe_allow_html=True)
+                    st.caption("현재 통과(OK)된 정답 레시피의 역산 효율과 L*a*b* 데이터를 클라우드 DB에 누적하여 초기 처방의 정확도를 높입니다.")
                     
-                    base_recipe = bat_actual_recipes[0] 
-                    base_name = active_batches[0]['name']
-                    
-                    total_calc_conc = sum(base_recipe)
-                    disp_salt, disp_alkali = get_auxiliaries_from_sheet(total_calc_conc)
-                    
-                    st.info(f"**[조제표 시트 자동 매칭]** (총 농도: {total_calc_conc:.2f}%) ➔ **망초:** {disp_salt}g/L / **소다회:** {disp_alkali}g/L", icon=":material/science:")
-                    
-                    unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                    recipe_df = pd.DataFrame({
-                        "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                        f"기존 투입 ({base_name})": [round(c, 4) for c in base_recipe],
-                        f"최종 추천 처방": [round(c, 4) for c in final_recipe],
-                        f"증감량 ({unit_label})": [round(final - init, 4) for final, init in zip(final_recipe, base_recipe)]
-                    })
-                    
-                    def color_delta(val): return f"color: {'#d32f2f' if val > 0 else ('#1976d2' if val < 0 else 'black')}; font-weight: bold;"
-                    st.dataframe(recipe_df.style.map(color_delta, subset=[f"증감량 ({unit_label})"])
-                                 .format({f"기존 투입 ({base_name})": "{:.2f}", f"최종 추천 처방": "{:.2f}", f"증감량 ({unit_label})": "{:+.2f}"}), 
-                                 hide_index=True, use_container_width=True)
-                    st.caption(f"※ 증감량은 [{base_name}]의 투입량을 기준으로 최종 추천 처방의 차이를 계산한 것입니다.")
-                    
-                    st.markdown("---")
-                    st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>database</span>AI 학습 데이터베이스 저장</h4>", unsafe_allow_html=True)
-                    st.caption("현재 도출된 현장별 '역산 효율' 데이터를 클라우드 DB에 누적하여 다음 처방의 정확도를 높입니다.")
-                    
-                    if st.button("현재 역산 결과 DB에 저장하기", type="primary", use_container_width=True, icon=":material/cloud_upload:"):
-                        with st.spinner("구글 시트에 데이터를 기록하고 있습니다..."):
+                    # 🌟 버튼 이름이 변경되었습니다!
+                    if st.button("🚀 최종 정답(OK) 결과 DB에 저장하기", type="primary", use_container_width=True):
+                        with st.spinner("구글 시트에 정답 데이터를 기록하고 있습니다..."):
                             is_saved = save_to_google_sheet(
                                 result_data=result, 
                                 active_batches=active_batches, 
                                 selected_raw_dyes=selected_raw_dyes, 
                                 display_name_dict=display_name_dict, 
                                 bat_actual_recipes=bat_actual_recipes,
-                                std_name=std_data['name'],
-                                dye_mode=st.session_state.dye_mode
+                                std_data=std_data,
+                                dye_mode=st.session_state.dye_mode,
+                                primary_light=light1_name
                             )
                         if is_saved:
-                            st.success("역산 효율 데이터가 성공적으로 클라우드 DB에 저장되었습니다!", icon=":material/check_circle:")
+                            st.success("완벽합니다! 최종 정답 데이터와 L*a*b* 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", icon=":material/check_circle:")
             else: 
                 st.error("보정 처방 산출에 실패했습니다.", icon=":material/error:")
