@@ -63,7 +63,8 @@ def get_auxiliaries_from_sheet(total_conc):
         return float(aux_table[-1]['망초']), float(aux_table[-1]['소다회'])
     return 0.0, 0.0
 
-# 🌟 데이터베이스에 스마트매치 결과 및 L*a*b*C*h, DE_CMC 기록 함수
+
+# 🌟 데이터베이스에 스마트매치 결과 및 L*a*b*C*h, DE_CMC 기록 함수 (A열부터 순서대로 정확히 저장되도록 수정)
 def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display_name_dict, bat_actual_recipes, std_data, dye_mode, primary_light):
     try:
         gc = get_gspread_client()
@@ -103,9 +104,22 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
             de_cmc = apply_dc_correction(primary_light, de_cmc)
             # ---------------------------------------------
             
+            # 🌟 A열(작업번호)부터 N열(DE_CMC)까지 누락 없이 정확한 순서로 하나의 리스트로 결합
             master_rows_to_append.append([
-                job_id, date_str, b_name, std_data['name'], dye_mode, round(total_conc, 4), salt_qty, alkali_qty,
-                round(L, 2), round(a, 2), round(b, 2), round(C, 2), round(h, 2), round(de_cmc, 2)
+                job_id,                               # A열: 작업번호
+                date_str,                             # B열: 날짜
+                b_name,                               # C열: 배치명
+                std_data['name'],                     # D열: 타겟(STD)명
+                dye_mode,                             # E열: 염색모드
+                round(total_conc, 4),                 # F열: 총농도
+                salt_qty,                             # G열: 망초
+                alkali_qty,                           # H열: 소다회
+                round(L, 2),                          # I열: L*
+                round(a, 2),                          # J열: a*
+                round(b, 2),                          # K열: b*
+                round(C, 2),                          # L열: C*
+                round(h, 2),                          # M열: h
+                round(de_cmc, 2)                      # N열: DE_CMC
             ])
             
             for j, raw_dye_name in enumerate(selected_raw_dyes):
@@ -118,8 +132,9 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
                     job_id, dye_disp_name, expected_qty, actual_qty, eff_rate
                 ])
                 
-        ws_master.append_rows(master_rows_to_append, value_input_option='USER_ENTERED')
-        ws_detail.append_rows(detail_rows_to_append, value_input_option='USER_ENTERED')
+        # 🌟 구글 시트의 첫 번째 빈 행에 A열부터 데이터를 정확히 채워넣도록 지정
+        ws_master.append_rows(master_rows_to_append, value_input_option='USER_ENTERED', table_range='A1')
+        ws_detail.append_rows(detail_rows_to_append, value_input_option='USER_ENTERED', table_range='A1')
         
         return True
     except Exception as e:
