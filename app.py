@@ -19,7 +19,7 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="T/S Smart Match", page_icon="logo.png")
 
 # ==========================================
-# 구글 시트 연결 및 조제표 자동 매칭 함수
+# 구글 시트 연결 및 조제표 자동 매칭 함수 (서버/로컬 겸용 처리)
 # ==========================================
 @st.cache_resource
 def get_gspread_client():
@@ -27,11 +27,14 @@ def get_gspread_client():
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
-    
-    # 🌟 로컬 파일 경로를 타지 않고, Streamlit Cloud Secrets에서 직접 인증 정보를 가져옵니다.
-    credentials_info = dict(st.secrets["gcp_service_account"])
-    
-    creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
+    # Streamlit Cloud 환경(Secrets 사용)과 로컬 환경(.json 파일 사용) 모두 지원
+    if "gcp_service_account" in st.secrets:
+        credentials_info = dict(st.secrets["gcp_service_account"])
+        creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
+    else:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        key_file_path = os.path.join(current_dir, "ohyoung-msds-app-83a2c20bc160.json")
+        creds = Credentials.from_service_account_file(key_file_path, scopes=scopes)
     return gspread.authorize(creds)
 
 @st.cache_data(ttl=600)
@@ -60,7 +63,7 @@ def get_auxiliaries_from_sheet(total_conc):
         return float(aux_table[-1]['망초']), float(aux_table[-1]['소다회'])
     return 0.0, 0.0
 
-# 🌟 [업데이트] 저장 함수에 L*a*b*C*h, DE_CMC 추출 로직 추가
+# 🌟 데이터베이스에 스마트매치 결과 및 L*a*b*C*h, DE_CMC 기록 함수
 def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display_name_dict, bat_actual_recipes, std_data, dye_mode, primary_light):
     try:
         gc = get_gspread_client()
@@ -129,7 +132,6 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
 if "dye_mode" not in st.session_state: st.session_state.dye_mode = "Reactive"
 if "disperse_sub" not in st.session_state: st.session_state.disperse_sub = "Jersey"
 if "selected_dyes" not in st.session_state: st.session_state.selected_dyes = []
-if "top_results" not in st.session_state: st.session_state.top_results = None
 if "run_calc" not in st.session_state: st.session_state.run_calc = False
 
 if "l1" not in st.session_state: st.session_state.l1 = "D65"
@@ -140,7 +142,6 @@ def set_dye_mode(mode):
     if st.session_state.dye_mode != mode:
         st.session_state.dye_mode = mode
         st.session_state.selected_dyes = []
-        st.session_state.top_results = None
         st.session_state.run_calc = False
 
 def toggle_dye(raw_name):
@@ -573,7 +574,6 @@ def confirm_disp_action():
     st.session_state.disperse_sub = st.session_state.temp_disp
     st.session_state.dye_mode = "Disperse"
     st.session_state.selected_dyes = []
-    st.session_state.top_results = None
     st.session_state.run_calc = False
 
 @st.dialog("백포 선택 (Disperse)")
@@ -709,7 +709,7 @@ with col_menu:
         light3_name = l_col3.selectbox("3차", light_options_optional, key="l3", index=light_options_optional.index("없음")) 
 
     with st.container(border=True):
-        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>최종 정답(QTX) 업로드 및 레시피 입력</strong>", unsafe_allow_html=True)
+        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>QTX 파일 업로드 및 레시피 입력</strong>", unsafe_allow_html=True)
         uploaded_file = st.file_uploader("QTX 파일 업로드", type=['qtx'], label_visibility="collapsed")
         
         edited_df = None
@@ -723,7 +723,7 @@ with col_menu:
             if standards and batches:
                 st.success(f"타겟(STD): **{standards[0]['name']}**", icon=":material/my_location:")
                 all_bat_names = [b['name'] for b in batches]
-                selected_bat_names = st.multiselect("최종 패스(OK)된 현장 배치를 선택하세요", options=all_bat_names, default=[all_bat_names[0]])
+                selected_bat_names = st.multiselect("분석할 현장 배치(BAT)를 선택하세요", options=all_bat_names, default=[all_bat_names[0]])
                 
                 if selected_bat_names:
                     selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
@@ -732,10 +732,10 @@ with col_menu:
                     df_input = pd.DataFrame(0.0, index=[display_name_dict.get(d, d) for d in selected_raw_dyes], columns=col_names)
                     
                     unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                    st.caption(f"※ OK(패스)된 배치의 실제 레시피 투입량({unit_label})을 입력해 주세요.")
+                    st.caption(f"※ 실제 배합된 레시피 투입량({unit_label})을 입력해 주세요.")
                     edited_df = st.data_editor(df_input, use_container_width=True)
                     
-                    if st.button("정답 데이터 추출 (보정 및 시각화)", type="primary", use_container_width=True, icon=":material/rocket_launch:"):
+                    if st.button("스마트 매치 분석 실행", type="primary", use_container_width=True, icon=":material/rocket_launch:"):
                         st.session_state.run_calc = True
                 else:
                     st.warning("분석할 배치를 최소 1개 이상 선택해 주세요.", icon=":material/warning:")
@@ -851,7 +851,7 @@ with col_graph:
 # 📌 [우측] 3. 역산 분석 및 보정 추천 처방
 # =======================================================
 with col_results:
-    st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>science</span>역산 및 최종 처방", unsafe_allow_html=True)
+    st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>science</span>역산 및 보정 처방", unsafe_allow_html=True)
     
     if st.session_state.get('run_calc', False) and edited_df is not None:
         std_data = standards[0]
@@ -895,7 +895,7 @@ with col_results:
             
             if result['success']:
                 with st.container(border=True):
-                    st.markdown(f"#### 1. 정답 발색 상태 (역산 분석)")
+                    st.markdown(f"#### 1. 역산 효율 분석 결과")
                     
                     for i, b_info in enumerate(active_batches):
                         b_name = b_info['name']
@@ -906,18 +906,31 @@ with col_results:
                         st.markdown(f"<div style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:4px; font-size: 18px;'>arrow_right</span> <b>{b_name} 효율 분석</b></div>", unsafe_allow_html=True)
                         batch_df = pd.DataFrame({
                             "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                            f"정답 투입": [round(c, 4) for c in actual_bat_rec],
+                            f"실제 투입": [round(c, 4) for c in actual_bat_rec],
                             f"역산 산출": [round(c, 4) for c in calc_bat_rec],
                             "역산 효율": [f"{cf*100:.1f}%" for cf in batch_cf]
                         })
-                        st.dataframe(batch_df.style.format({f"정답 투입": "{:.2f}", f"역산 산출": "{:.2f}"}), hide_index=True, use_container_width=True)
+                        st.dataframe(batch_df.style.format({f"실제 투입": "{:.2f}", f"역산 산출": "{:.2f}"}), hide_index=True, use_container_width=True)
                     
                     st.markdown("---")
-                    st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>verified</span>최종 정답(Golden Data) 학습</h4>", unsafe_allow_html=True)
-                    st.caption("현재 통과(OK)된 정답 레시피의 역산 효율과 L*a*b* 데이터를 클라우드 DB에 누적하여 초기 처방의 정확도를 높입니다.")
+                    st.markdown("#### 2. 최종 보정 처방 제안")
+                    final_rec = result['final_recipe']
+                    total_final_conc = sum(final_rec)
+                    salt_q, alkali_q = get_auxiliaries_from_sheet(total_final_conc)
                     
-                    # 🌟 버튼 이름이 변경되었습니다!
-                    if st.button("🚀 최종 정답(OK) 결과 DB에 저장하기", type="primary", use_container_width=True):
+                    final_df = pd.DataFrame({
+                        "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
+                        "보정 추천량 (%)": [round(c, 3) for c in final_rec]
+                    })
+                    st.dataframe(final_df.style.format({"보정 추천량 (%)": "{:.3f}"}), hide_index=True, use_container_width=True)
+                    st.info(f"⚖️ **자동 조제량 ➔ 망초: {salt_q} g/L / 소다회: {alkali_q} g/L**", icon=":material/water_drop:")
+                    
+                    st.markdown("---")
+                    st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>verified</span>데이터베이스(DB) 기록</h4>", unsafe_allow_html=True)
+                    st.caption("컬러가 최종 패스(OK)된 배치인 경우에만 아래 버튼을 눌러 정답 데이터와 L*a*b* 색상 좌표를 클라우드 DB에 누적하세요.")
+                    
+                    # 🌟 버튼 이름을 현장 용도에 맞게 명확히 수정했습니다!
+                    if st.button("🚀 최종 패스(OK) 정답 데이터로 DB에 저장하기", type="primary", use_container_width=True):
                         with st.spinner("구글 시트에 정답 데이터를 기록하고 있습니다..."):
                             is_saved = save_to_google_sheet(
                                 result_data=result, 
@@ -930,6 +943,6 @@ with col_results:
                                 primary_light=light1_name
                             )
                         if is_saved:
-                            st.success("완벽합니다! 최종 정답 데이터와 L*a*b* 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", icon=":material/check_circle:")
+                            st.success("완벽합니다! 최종 패스된 데이터와 L*a*b* 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", icon=":material/check_circle:")
             else: 
                 st.error("보정 처방 산출에 실패했습니다.", icon=":material/error:")
