@@ -16,7 +16,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="T/S Smart Match", page_icon="logo.png")
+st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="Spectra50", page_icon="logo.png")
 
 # ==========================================
 # 구글 시트 연결 및 조제표 자동 매칭 함수 (서버/로컬 겸용 처리)
@@ -186,7 +186,7 @@ st.markdown(f"""
 </style>
 <div class="fixed-header">
     <img src="data:image/png;base64,{logo_base64}" onerror="this.style.display='none'">
-    <h2>T/S Smart Match</h2>
+    <h2>Spectra50</h2>
 </div>
 """, unsafe_allow_html=True)
 
