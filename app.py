@@ -16,7 +16,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="Spectra50 Smart Match", page_icon="logo.png")
+st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="T/S Smart Match", page_icon="logo.png")
 
 # ==========================================
 # 구글 시트 연결 및 조제표 자동 매칭 함수 (서버/로컬 겸용 처리)
@@ -27,13 +27,21 @@ def get_gspread_client():
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
-    if "gcp_service_account" in st.secrets:
-        credentials_info = dict(st.secrets["gcp_service_account"])
-        creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
-    else:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        key_file_path = os.path.join(current_dir, "ohyoung-msds-app-83a2c20bc160.json")
-        creds = Credentials.from_service_account_file(key_file_path, scopes=scopes)
+    
+    # 🌟 서버(Streamlit Cloud) 환경인지 로컬 PC 환경인지 안전하게 확인합니다.
+    try:
+        if "gcp_service_account" in st.secrets:
+            credentials_info = dict(st.secrets["gcp_service_account"])
+            creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
+            return gspread.authorize(creds)
+    except Exception:
+        # 로컬 PC라서 secrets 파일이 아예 없을 경우, 에러를 무시하고 아래 로컬 코드로 넘어갑니다.
+        pass
+        
+    # 로컬 PC 환경일 경우 폴더 내의 json 파일을 직접 읽어옵니다.
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    key_file_path = os.path.join(current_dir, "ohyoung-msds-app-83a2c20bc160.json")
+    creds = Credentials.from_service_account_file(key_file_path, scopes=scopes)
     return gspread.authorize(creds)
 
 @st.cache_data(ttl=600)
@@ -152,7 +160,7 @@ def clear_dyes():
 dye_mode = st.session_state.dye_mode
 
 # ==========================================
-# 2. 공통 UI 스타일 및 상단 고정 헤더 구성
+# 2. 공통 UI 스타일 및 상단 고정 헤더 구성 
 # ==========================================
 try:
     with open("logo.png", "rb") as image_file:
@@ -186,7 +194,7 @@ st.markdown(f"""
 </style>
 <div class="fixed-header">
     <img src="data:image/png;base64,{logo_base64}" onerror="this.style.display='none'">
-    <h2>Spectra50 Smart Match</h2>
+    <h2>T/S Smart Match</h2>
 </div>
 """, unsafe_allow_html=True)
 
@@ -686,9 +694,9 @@ with st.sidebar:
             st.button(display_name, key=f"dye_{raw_name}_{idx}", use_container_width=True, type=btn_type, on_click=toggle_dye, args=(raw_name,))
 
 # ------------------------------------------
-# 메인 화면 구성 (3분할 레이아웃)
+# 🌟 메인 화면 구성 (3분할 레이아웃 비율 수정: 좌측 넓게, 우측 좁게)
 # ------------------------------------------
-col_menu, col_graph, col_results = st.columns([1, 1.3, 1.3], gap="medium")
+col_menu, col_graph, col_results = st.columns([1.3, 1.3, 1], gap="medium")
 
 # =======================================================
 # 📌 [좌측] 1. 광원 설정, 업로드 및 BAT 입력 
@@ -764,7 +772,6 @@ with col_graph:
             fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
             fig.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.7)
             
-            # 🌟 STD(타겟) 마커 크기를 BAT와 동일하게(size=12) 조정
             fig.add_trace(go.Scatter(
                 x=[0], y=[0], mode='markers+text',
                 marker=dict(symbol='circle', size=12, color='#000000', line=dict(width=1, color='#000000')),
@@ -892,7 +899,49 @@ with col_results:
             
             if result['success']:
                 with st.container(border=True):
-                    st.markdown(f"#### 1. 역산 효율 분석 결과")
+                    
+                    # 🌟 1. 최종 보정 처방 제안 (맨 위로 이동, 소수점 4자리 적용 및 디자인 강조)
+                    st.markdown("#### 1. 최종 보정 처방 제안")
+                    final_rec = result['final_recipe']
+                    
+                    final_df = pd.DataFrame({
+                        "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
+                        "보정 추천량 (%)": [round(c, 4) for c in final_rec]
+                    })
+                    
+                    # 굵은 글씨 및 프라이머리 컬러(#1976d2 블루) 적용, 소수점 4자리 포맷
+                    styled_final_df = final_df.style.format({"보정 추천량 (%)": "{:.4f}"}).set_properties(
+                        subset=['보정 추천량 (%)'], 
+                        **{'color': '#1976d2', 'font-weight': 'bold', 'font-size': '15px'}
+                    )
+                    
+                    st.dataframe(styled_final_df, hide_index=True, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    # 🌟 2. 데이터베이스(DB) 누적 기록 및 텍스트 수정된 저장 버튼
+                    st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>database</span>2. 데이터베이스(DB) 누적 기록</h4>", unsafe_allow_html=True)
+                    st.caption("💡 1차, 2차, 3차 상관없이 역산 분석을 완료했다면 모두 저장해 주세요. 실패한 데이터도 AI 학습의 훌륭한 자양분이 됩니다.")
+                    
+                    if st.button("🚀 현재 분석 결과 DB에 누적 저장하기", type="primary", use_container_width=True):
+                        with st.spinner("구글 시트에 데이터를 기록하고 있습니다..."):
+                            is_saved = save_to_google_sheet(
+                                result_data=result, 
+                                active_batches=active_batches, 
+                                selected_raw_dyes=selected_raw_dyes, 
+                                display_name_dict=display_name_dict, 
+                                bat_actual_recipes=bat_actual_recipes,
+                                std_data=std_data,
+                                dye_mode=st.session_state.dye_mode,
+                                primary_light=light1_name
+                            )
+                        if is_saved:
+                            st.success("완벽합니다! 분석된 산출값과 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", icon=":material/check_circle:")
+                            
+                    st.markdown("---")
+                    
+                    # 🌟 3. 역산 효율 상세 분석 결과 (소수점 4자리 적용)
+                    st.markdown(f"#### 3. 역산 효율 상세 분석")
                     
                     for i, b_info in enumerate(active_batches):
                         b_name = b_info['name']
@@ -907,36 +956,7 @@ with col_results:
                             f"역산 산출": [round(c, 4) for c in calc_bat_rec],
                             "역산 효율": [f"{cf*100:.1f}%" for cf in batch_cf]
                         })
-                        st.dataframe(batch_df.style.format({f"실제 투입": "{:.2f}", f"역산 산출": "{:.2f}"}), hide_index=True, use_container_width=True)
-                    
-                    st.markdown("---")
-                    st.markdown("#### 2. 최종 보정 처방 제안")
-                    final_rec = result['final_recipe']
-                    
-                    final_df = pd.DataFrame({
-                        "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                        "보정 추천량 (%)": [round(c, 3) for c in final_rec]
-                    })
-                    st.dataframe(final_df.style.format({"보정 추천량 (%)": "{:.3f}"}), hide_index=True, use_container_width=True)
-                    # 🌟 자동 조제량 문구 및 안내 박스 제거 완료
-                    
-                    st.markdown("---")
-                    st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>verified</span>데이터베이스(DB) 기록</h4>", unsafe_allow_html=True)
-                    st.caption("컬러가 최종 패스(OK)된 배치인 경우에만 아래 버튼을 눌러 정답 데이터와 L*a*b* 색상 좌표를 클라우드 DB에 누적하세요.")
-                    
-                    if st.button("🚀 최종 패스(OK) 정답 데이터로 DB에 저장하기", type="primary", use_container_width=True):
-                        with st.spinner("구글 시트에 정답 데이터를 기록하고 있습니다..."):
-                            is_saved = save_to_google_sheet(
-                                result_data=result, 
-                                active_batches=active_batches, 
-                                selected_raw_dyes=selected_raw_dyes, 
-                                display_name_dict=display_name_dict, 
-                                bat_actual_recipes=bat_actual_recipes,
-                                std_data=std_data,
-                                dye_mode=st.session_state.dye_mode,
-                                primary_light=light1_name
-                            )
-                        if is_saved:
-                            st.success("완벽합니다! 최종 패스된 데이터와 L*a*b* 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", icon=":material/check_circle:")
+                        st.dataframe(batch_df.style.format({f"실제 투입": "{:.4f}", f"역산 산출": "{:.4f}"}), hide_index=True, use_container_width=True)
+
             else: 
                 st.error("보정 처방 산출에 실패했습니다.", icon=":material/error:")
