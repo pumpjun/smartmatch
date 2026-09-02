@@ -19,7 +19,7 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="T/S Smart Match", page_icon="logo.png")
 
 # ==========================================
-# 구글 시트 연결 및 조제표 자동 매칭 함수 (서버/로컬 겸용 처리)
+# 구글 시트 연결 및 조제표 자동 매칭 함수
 # ==========================================
 @st.cache_resource
 def get_gspread_client():
@@ -27,18 +27,14 @@ def get_gspread_client():
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
-    
-    # 🌟 서버(Streamlit Cloud) 환경인지 로컬 PC 환경인지 안전하게 확인합니다.
     try:
         if "gcp_service_account" in st.secrets:
             credentials_info = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
             return gspread.authorize(creds)
     except Exception:
-        # 로컬 PC라서 secrets 파일이 아예 없을 경우, 에러를 무시하고 아래 로컬 코드로 넘어갑니다.
         pass
         
-    # 로컬 PC 환경일 경우 폴더 내의 json 파일을 직접 읽어옵니다.
     current_dir = os.path.dirname(os.path.abspath(__file__))
     key_file_path = os.path.join(current_dir, "ohyoung-msds-app-83a2c20bc160.json")
     creds = Credentials.from_service_account_file(key_file_path, scopes=scopes)
@@ -131,8 +127,18 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
         return False
 
 # ==========================================
-# 1. 세션 상태 초기화
+# 🌟 1. 데이터 로드 (신규: 보정 계수 로드 기능 추가)
 # ==========================================
+@st.cache_data(ttl=60)
+def load_correction_factors():
+    try:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(current_dir, "correction.json")
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {} # 파일이 없거나 에러나면 빈 껍데기 반환 (오류 방지)
+
 if "dye_mode" not in st.session_state: st.session_state.dye_mode = "Reactive"
 if "disperse_sub" not in st.session_state: st.session_state.disperse_sub = "Jersey"
 if "selected_dyes" not in st.session_state: st.session_state.selected_dyes = []
@@ -870,6 +876,10 @@ with col_results:
         bat_expected_recipes = [bat_actual_recipes[0] for _ in range(len(active_batches))]
         
         with st.spinner("스마트 매칭 분석 중..."):
+            
+            # 🌟 신규: 보정 파일(correction.json)을 읽어들여 전역 효율 변수로 세팅
+            global_cf_dict = load_correction_factors()
+            
             dye_predictors = []
             blank_ks_31 = blank_ks[4:35]
             
@@ -878,13 +888,19 @@ with col_results:
                 concs = sorted([float(k) for k in conc_data.keys() if float(k) > 0])
                 concs_array = [0.0] + concs
                 
+                # correction.json에 있으면 그 값을, 없으면 기본값 1.0(수정 안 함) 사용
+                g_cf = float(global_cf_dict.get(dye_name, 1.0))
+                
                 ks_matrix = [np.zeros(31)]
                 for c in concs:
                     c_key = [k for k in conc_data.keys() if float(k) == c][0]
                     target_wls = np.arange(400, 710, 10)
                     sorted_items = sorted(conc_data[c_key].items(), key=lambda x: int(x[0]))
                     normalized_vals = np.interp(target_wls, np.array([int(k) for k, v in sorted_items]), np.array([float(v) for k, v in sorted_items]))
-                    ks_matrix.append(np.maximum(get_ks(normalized_vals) - blank_ks_31, 0))
+                    
+                    # 🌟 핵심: 실험실 데이터 KS값에 구글시트에서 학습한 전역 효율(g_cf)을 강제로 곱해 현실과 일치시킴
+                    ks_matrix.append(np.maximum(get_ks(normalized_vals) - blank_ks_31, 0) * g_cf)
+                    
                 dye_predictors.append(DyePredictor(concs_array, ks_matrix))
             
             active_lights = [light1_name]
