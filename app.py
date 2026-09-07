@@ -12,10 +12,6 @@ import re
 import pyperclip
 from datetime import datetime
 
-# --- 추가된 라이브러리 (시리얼 통신) ---
-import serial
-import time
-
 # --- 구글 시트 API 연동 라이브러리 ---
 import gspread
 from google.oauth2.service_account import Credentials
@@ -131,40 +127,7 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
         return False
 
 # ==========================================
-# 🌟 신규: Datacolor 시리얼 통신 측정 함수
-# ==========================================
-def measure_datacolor():
-    COM_PORT = "COM3"
-    BAUD_RATE = 9600
-    try:
-        with serial.Serial(COM_PORT, BAUD_RATE, timeout=10) as ser:
-            command = "ZM2GB"
-            checksum = sum(command.encode('ascii'))
-            full_cmd = f"{command}{checksum:04X}:\r\n"
-            ser.write(full_cmd.encode('ascii'))
-            
-            raw_data = []
-            while True:
-                line = ser.readline().decode('ascii', errors='ignore').strip()
-                if not line: break
-                if line == "*": continue
-                
-                if "," in line and "." in line:
-                    vals = [float(x) / 100.0 for x in line.split(',') if x.strip()]
-                    raw_data.extend(vals)
-                    
-                if len(raw_data) >= 40 and line.endswith(":") and len(line) <= 6:
-                    break
-                    
-            if len(raw_data) >= 40:
-                # 360nm ~ 700nm (35포인트) 데이터 추출
-                return np.array(raw_data[0:35])
-    except Exception as e:
-        st.error(f"기기 연결 오류: {e}")
-    return None
-
-# ==========================================
-# 🌟 1. 데이터 로드
+# 🌟 1. 데이터 로드 (신규: 보정 계수 로드 기능 추가)
 # ==========================================
 @st.cache_data(ttl=60)
 def load_correction_factors():
@@ -174,7 +137,7 @@ def load_correction_factors():
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception:
-        return {} 
+        return {} # 파일이 없거나 에러나면 빈 껍데기 반환 (오류 방지)
 
 if "dye_mode" not in st.session_state: st.session_state.dye_mode = "Reactive"
 if "disperse_sub" not in st.session_state: st.session_state.disperse_sub = "Jersey"
@@ -184,10 +147,6 @@ if "run_calc" not in st.session_state: st.session_state.run_calc = False
 if "l1" not in st.session_state: st.session_state.l1 = "D65"
 if "l2" not in st.session_state: st.session_state.l2 = "없음"
 if "l3" not in st.session_state: st.session_state.l3 = "없음"
-
-# 실시간 측정 데이터 저장을 위한 세션 추가
-if "live_standards" not in st.session_state: st.session_state.live_standards = []
-if "live_batches" not in st.session_state: st.session_state.live_batches = []
 
 def set_dye_mode(mode):
     if st.session_state.dye_mode != mode:
@@ -689,12 +648,6 @@ with top_menu_cols[4]:
         st.rerun()
 
 with st.sidebar:
-    st.markdown(f"<h3 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>palette</span>염료 리스트</h3>", unsafe_allow_html=True)
-    if missing_dyes: st.warning(f"데이터 부족 제외 염료 {len(missing_dyes)}개", icon=":material/warning:")
-    st.caption("클릭하여 선택 / 해제하세요.")
-            
-    st.markdown("---")
-    
     def clear_search(): st.session_state.search_query_input = ""
     st.markdown(f"<div style='font-size: 14px; font-weight: bold; margin-bottom: 5px; display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:6px; font-size:18px;'>search</span>염료 검색</div>", unsafe_allow_html=True)
     
@@ -703,6 +656,10 @@ with st.sidebar:
         search_query = st.text_input("염료 검색", placeholder="검색어 입력 후 Enter ↵", label_visibility="collapsed", key="search_query_input")
     with col_clear:
         st.button("초기화", use_container_width=True, on_click=clear_search)
+
+    if missing_dyes: st.warning(f"데이터 부족 제외 염료 {len(missing_dyes)}개", icon=":material/warning:")
+            
+    st.markdown("---")
         
     dye_hex_dict = get_all_dye_hex_dict(st.session_state.dye_mode)
     filtered_dyes = []
@@ -746,7 +703,7 @@ with st.sidebar:
 col_menu, col_graph, col_results = st.columns([1.3, 1.3, 1], gap="medium")
 
 # =======================================================
-# 📌 [좌측] 1. 광원 설정, 업로드 및 직접 측정 입력 
+# 📌 [좌측] 1. 광원 설정, 업로드 및 BAT 입력 
 # =======================================================
 with col_menu:
     with st.container(border=True):
@@ -760,54 +717,21 @@ with col_menu:
         light3_name = l_col3.selectbox("3차", light_options_optional, key="l3", index=light_options_optional.index("없음")) 
 
     with st.container(border=True):
-        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>데이터 입력 (QTX 또는 직접 측정)</strong>", unsafe_allow_html=True)
-        
-        tab1, tab2 = st.tabs(["📁 QTX 파일 업로드", "🔴 기기 직접 측정"])
-        
-        with tab1:
-            uploaded_file = st.file_uploader("QTX 파일 업로드", type=['qtx'], label_visibility="collapsed")
-            
-        with tab2:
-            st.caption("Datacolor 장비(COM3)에서 샘플을 직접 측정합니다.")
-            measure_type = st.radio("측정 대상", ["타겟(STD)", "현장 배치(BAT)"], horizontal=True)
-            
-            col_name, col_btn = st.columns([7, 3])
-            sample_name = col_name.text_input("샘플 이름", value="Live_Sample_01", label_visibility="collapsed")
-            if col_btn.button("측정 시작", use_container_width=True, type="primary"):
-                with st.spinner("플래시 대기 중..."):
-                    r_35_data = measure_datacolor()
-                    if r_35_data is not None:
-                        new_data = {
-                            'type': 'STANDARD_DATA' if measure_type == "타겟(STD)" else 'BATCH_DATA',
-                            'name': sample_name,
-                            'r_35': r_35_data,
-                            'ks_31': get_ks(r_35_data[4:35])
-                        }
-                        if measure_type == "타겟(STD)": 
-                            st.session_state.live_standards = [new_data]
-                        else: 
-                            st.session_state.live_batches.append(new_data)
-                        st.success(f"{sample_name} 측정 성공!")
-
-        # --- QTX와 실시간 측정 데이터 병합 ---
-        standards = []
-        batches = []
-        
-        if uploaded_file:
-            content = uploaded_file.getvalue().decode('euc-kr', errors='ignore')
-            parsed_blocks = parse_qtx_blocks(content)
-            standards.extend([b for b in parsed_blocks if b['type'] == 'STANDARD_DATA'])
-            batches.extend([b for b in parsed_blocks if b['type'] == 'BATCH_DATA'])
-            
-        standards.extend(st.session_state.live_standards)
-        batches.extend(st.session_state.live_batches)
+        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>QTX 파일 업로드 및 레시피 입력</strong>", unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("QTX 파일 업로드", type=['qtx'], label_visibility="collapsed")
         
         edited_df = None
-        if (standards or batches) and len(st.session_state.selected_dyes) > 0:
+        if uploaded_file and len(st.session_state.selected_dyes) > 0:
+            content = uploaded_file.getvalue().decode('euc-kr', errors='ignore')
+            parsed_blocks = parse_qtx_blocks(content)
+            
+            standards = [b for b in parsed_blocks if b['type'] == 'STANDARD_DATA']
+            batches = [b for b in parsed_blocks if b['type'] == 'BATCH_DATA']
+            
             if standards and batches:
-                st.success(f"타겟(STD): **{standards[0]['name']}**", icon=":material/my_location:")
+                st.success(f"Standard: **{standards[0]['name']}**", icon=":material/target:")
                 all_bat_names = [b['name'] for b in batches]
-                selected_bat_names = st.multiselect("분석할 현장 배치(BAT)를 선택하세요", options=all_bat_names, default=[all_bat_names[0]])
+                selected_bat_names = st.multiselect("Batch", options=all_bat_names, default=[all_bat_names[0]])
                 
                 if selected_bat_names:
                     selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
@@ -816,22 +740,20 @@ with col_menu:
                     df_input = pd.DataFrame(0.0, index=[display_name_dict.get(d, d) for d in selected_raw_dyes], columns=col_names)
                     
                     unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                    st.caption(f"※ 실제 배합된 레시피 투입량({unit_label})을 입력해 주세요.")
+                    st.caption(f":material/info: 실제 배합된 레시피 투입량({unit_label})을 입력해 주세요.")
                     edited_df = st.data_editor(df_input, use_container_width=True)
                     
                     if st.button("스마트 매치 분석 실행", type="primary", use_container_width=True, icon=":material/rocket_launch:"):
                         st.session_state.run_calc = True
                 else:
-                    st.warning("분석할 배치를 최소 1개 이상 선택해 주세요.", icon=":material/warning:")
+                    st.warning("분석할 Batch를 최소 1개 이상 선택해 주세요.", icon=":material/warning:")
                     st.session_state.run_calc = False
             else:
-                st.error("STANDARD 또는 BATCH 데이터가 부족합니다.", icon=":material/error:")
+                st.error("QTX 파일에 STANDARD 또는 BATCH 데이터가 부족합니다.", icon=":material/error:")
                 st.session_state.run_calc = False
         else:
-            if not (standards or batches): 
-                st.info("QTX 파일을 업로드하거나 샘플을 직접 측정해 주세요.", icon=":material/info:")
-            elif len(st.session_state.selected_dyes) == 0: 
-                st.warning("사이드바에서 처방에 사용된 염료를 선택해 주세요.", icon=":material/warning:")
+            if not uploaded_file: st.info("QTX 파일을 업로드 해주세요.", icon=":material/info:")
+            elif len(st.session_state.selected_dyes) == 0: st.warning("사이드바에서 처방에 사용된 염료를 선택해 주세요.", icon=":material/warning:")
             st.session_state.run_calc = False
 
 # =======================================================
@@ -840,10 +762,10 @@ with col_menu:
 with col_graph:
     st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>monitoring</span>타겟 vs 현장 분석", unsafe_allow_html=True)
     
-    if (standards and batches) and 'selected_bat_names' in locals() and selected_bat_names:
+    if uploaded_file and 'standards' in locals() and 'batches' in locals() and standards and batches:
         import plotly.graph_objects as go
         std_data_res = standards[0]
-        active_batches_for_view = [b for b in batches if b['name'] in selected_bat_names]
+        active_batches_for_view = [b for b in batches if b['name'] in selected_bat_names] if ('selected_bat_names' in locals() and selected_bat_names) else batches
         active_lights = [l for l in [light1_name, light2_name, light3_name] if l != "없음"]
         
         with st.container(border=True):
@@ -953,6 +875,7 @@ with col_results:
         
         with st.spinner("스마트 매칭 분석 중..."):
             
+            # 🌟 신규: 보정 파일(correction.json)을 읽어들여 전역 효율 변수로 세팅
             global_cf_dict = load_correction_factors()
             
             dye_predictors = []
@@ -963,6 +886,7 @@ with col_results:
                 concs = sorted([float(k) for k in conc_data.keys() if float(k) > 0])
                 concs_array = [0.0] + concs
                 
+                # correction.json에 있으면 그 값을, 없으면 기본값 1.0(수정 안 함) 사용
                 g_cf = float(global_cf_dict.get(dye_name, 1.0))
                 
                 ks_matrix = [np.zeros(31)]
@@ -972,6 +896,7 @@ with col_results:
                     sorted_items = sorted(conc_data[c_key].items(), key=lambda x: int(x[0]))
                     normalized_vals = np.interp(target_wls, np.array([int(k) for k, v in sorted_items]), np.array([float(v) for k, v in sorted_items]))
                     
+                    # 🌟 핵심: 실험실 데이터 KS값에 구글시트에서 학습한 전역 효율(g_cf)을 강제로 곱해 현실과 일치시킴
                     ks_matrix.append(np.maximum(get_ks(normalized_vals) - blank_ks_31, 0) * g_cf)
                     
                 dye_predictors.append(DyePredictor(concs_array, ks_matrix))
@@ -989,6 +914,7 @@ with col_results:
             if result['success']:
                 with st.container(border=True):
                     
+                    # 🌟 1. 최종 보정 처방 제안 (맨 위로 이동, 소수점 4자리 적용 및 디자인 강조)
                     st.markdown("#### 1. 최종 보정 처방 제안")
                     final_rec = result['final_recipe']
                     
@@ -997,6 +923,7 @@ with col_results:
                         "보정 추천량 (%)": [round(c, 4) for c in final_rec]
                     })
                     
+                    # 굵은 글씨 및 프라이머리 컬러(#1976d2 블루) 적용, 소수점 4자리 포맷
                     styled_final_df = final_df.style.format({"보정 추천량 (%)": "{:.4f}"}).set_properties(
                         subset=['보정 추천량 (%)'], 
                         **{'color': '#1976d2', 'font-weight': 'bold', 'font-size': '15px'}
@@ -1006,10 +933,11 @@ with col_results:
                     
                     st.markdown("---")
                     
+                    # 🌟 2. 데이터베이스(DB) 누적 기록 및 텍스트 수정된 저장 버튼
                     st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>database</span>2. 데이터베이스(DB) 누적 기록</h4>", unsafe_allow_html=True)
-                    st.caption("💡 1차, 2차, 3차 상관없이 역산 분석을 완료했다면 모두 저장해 주세요. 실패한 데이터도 AI 학습의 훌륭한 자양분이 됩니다.")
+                    st.caption(":material/lightbulb: 1차, 2차, 3차 상관없이 역산 분석을 완료했다면 모두 저장해 주세요. 실패한 데이터도 AI 학습의 훌륭한 자양분이 됩니다.")
                     
-                    if st.button("🚀 현재 분석 결과 DB에 누적 저장하기", type="primary", use_container_width=True):
+                    if st.button("현재 분석 결과 DB에 누적 저장하기", type="primary", use_container_width=True, icon=":material/database:"):
                         with st.spinner("구글 시트에 데이터를 기록하고 있습니다..."):
                             is_saved = save_to_google_sheet(
                                 result_data=result, 
@@ -1026,6 +954,7 @@ with col_results:
                             
                     st.markdown("---")
                     
+                    # 🌟 3. 역산 효율 상세 분석 결과 (소수점 4자리 적용)
                     st.markdown(f"#### 3. 역산 효율 상세 분석")
                     
                     for i, b_info in enumerate(active_batches):
