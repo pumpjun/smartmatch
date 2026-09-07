@@ -729,9 +729,12 @@ with col_menu:
             batches = [b for b in parsed_blocks if b['type'] == 'BATCH_DATA']
             
             if standards and batches:
-                st.success(f"Standard: **{standards[0]['name']}**", icon=":material/target:")
+                # 📌 복구된 부분 (에러를 유발한 유효하지 않은 아이콘 :material/target: 을 안정적인 my_location으로 복구)
+                st.success(f"측정대상 (Standard): **{standards[0]['name']}**", icon=":material/my_location:")
                 all_bat_names = [b['name'] for b in batches]
-                selected_bat_names = st.multiselect("Batch", options=all_bat_names, default=[all_bat_names[0]])
+                
+                # 📌 텍스트 변경 요청 반영 (측정대상 (Batch))
+                selected_bat_names = st.multiselect("측정대상 (Batch)를 선택하세요", options=all_bat_names, default=[all_bat_names[0]])
                 
                 if selected_bat_names:
                     selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
@@ -937,7 +940,8 @@ with col_results:
                     st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>database</span>2. 데이터베이스(DB) 누적 기록</h4>", unsafe_allow_html=True)
                     st.caption(":material/lightbulb: 1차, 2차, 3차 상관없이 역산 분석을 완료했다면 모두 저장해 주세요. 실패한 데이터도 AI 학습의 훌륭한 자양분이 됩니다.")
                     
-                    if st.button("현재 분석 결과 DB에 누적 저장하기", type="primary", use_container_width=True, icon=":material/database:"):
+                    # (안전성을 위해 저장 버튼 내의 구글 아이콘을 잠시 제거합니다)
+                    if st.button("현재 분석 결과 DB에 누적 저장하기", type="primary", use_container_width=True):
                         with st.spinner("구글 시트에 데이터를 기록하고 있습니다..."):
                             is_saved = save_to_google_sheet(
                                 result_data=result, 
