@@ -689,14 +689,10 @@ with top_menu_cols[4]:
         st.rerun()
 
 with st.sidebar:
-    st.markdown(f"<h3 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>palette</span>염료 리스트</h3>", unsafe_allow_html=True)
-    if missing_dyes: st.warning(f"데이터 부족 제외 염료 {len(missing_dyes)}개", icon=":material/warning:")
-    st.caption("클릭하여 선택 / 해제하세요.")
-            
-    st.markdown("---")
-    
     def clear_search(): st.session_state.search_query_input = ""
     st.markdown(f"<div style='font-size: 14px; font-weight: bold; margin-bottom: 5px; display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:6px; font-size:18px;'>search</span>염료 검색</div>", unsafe_allow_html=True)
+    
+    if missing_dyes: st.warning(f"데이터 부족 제외 염료 {len(missing_dyes)}개", icon=":material/warning:")
     
     col_search, col_clear = st.columns([7.5, 2.5], vertical_alignment="center")
     with col_search:
@@ -762,14 +758,14 @@ with col_menu:
     with st.container(border=True):
         st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>데이터 입력 (QTX 또는 직접 측정)</strong>", unsafe_allow_html=True)
         
-        tab1, tab2 = st.tabs(["📁 QTX 파일 업로드", "🔴 기기 직접 측정"])
+        tab1, tab2 = st.tabs([":material/folder_open: QTX 파일 업로드", ":material/sensors: 기기 직접 측정"])
         
         with tab1:
             uploaded_file = st.file_uploader("QTX 파일 업로드", type=['qtx'], label_visibility="collapsed")
             
         with tab2:
             st.caption("Datacolor 장비(COM3)에서 샘플을 직접 측정합니다.")
-            measure_type = st.radio("측정 대상", ["타겟(STD)", "현장 배치(BAT)"], horizontal=True)
+            measure_type = st.radio("측정 대상", ["Standard", "Batch"], horizontal=True)
             
             col_name, col_btn = st.columns([7, 3])
             sample_name = col_name.text_input("샘플 이름", value="Live_Sample_01", label_visibility="collapsed")
@@ -778,12 +774,12 @@ with col_menu:
                     r_35_data = measure_datacolor()
                     if r_35_data is not None:
                         new_data = {
-                            'type': 'STANDARD_DATA' if measure_type == "타겟(STD)" else 'BATCH_DATA',
+                            'type': 'STANDARD_DATA' if measure_type == "Standard" else 'BATCH_DATA',
                             'name': sample_name,
                             'r_35': r_35_data,
                             'ks_31': get_ks(r_35_data[4:35])
                         }
-                        if measure_type == "타겟(STD)": 
+                        if measure_type == "Standard": 
                             st.session_state.live_standards = [new_data]
                         else: 
                             st.session_state.live_batches.append(new_data)
