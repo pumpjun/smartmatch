@@ -23,6 +23,18 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="SpectraMatch", page_icon="logo.png")
 
 # ==========================================
+# 🌐 다국어(한/영) 지원 설정
+# ==========================================
+if "lang" not in st.session_state: 
+    st.session_state.lang = "KO"
+
+def set_lang(lang_code):
+    st.session_state.lang = lang_code
+
+def t(ko_text, en_text):
+    return ko_text if st.session_state.lang == "KO" else en_text
+
+# ==========================================
 # 구글 시트 연결 및 조제표 자동 매칭 함수
 # ==========================================
 @st.cache_resource
@@ -53,7 +65,7 @@ def load_aux_table():
         ws_aux = sh.worksheet("조제표")
         return ws_aux.get_all_records() 
     except Exception as e:
-        st.error(f"조제표 시트를 읽어올 수 없습니다: {e}", icon=":material/error:")
+        st.error(t(f"조제표 시트를 읽어올 수 없습니다: {e}", f"Failed to load aux table: {e}"), icon=":material/error:")
         return []
 
 def get_auxiliaries_from_sheet(total_conc):
@@ -127,7 +139,7 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
         
         return True
     except Exception as e:
-        st.error(f"구글 시트 저장 중 오류가 발생했습니다: {e}", icon=":material/error:")
+        st.error(t(f"구글 시트 저장 중 오류가 발생했습니다: {e}", f"Error saving to Google Sheets: {e}"), icon=":material/error:")
         return False
 
 # ==========================================
@@ -157,10 +169,9 @@ def measure_datacolor():
                     break
                     
             if len(raw_data) >= 40:
-                # 360nm ~ 700nm (35포인트) 데이터 추출
                 return np.array(raw_data[0:35])
     except Exception as e:
-        st.error(f"기기 연결 오류: {e}")
+        st.error(t(f"기기 연결 오류: {e}", f"Device connection error: {e}"))
     return None
 
 # ==========================================
@@ -231,9 +242,9 @@ st.markdown(f"""
     [data-testid="collapsedControl"] {{ display: none !important; }}
     [data-testid="stSidebar"] div.stButton {{ margin-bottom: -10px; }}
     div[data-testid="stHorizontalBlock"]:has(#top-menu-marker) {{
-        position: fixed !important; top: 10px !important; left: 360px !important; 
-        width: 820px !important; z-index: 999999 !important; align-items: center !important; 
-    }}
+    position: fixed !important; top: 10px !important; left: 360px !important; 
+    width: calc(100vw - 380px) !important; z-index: 999999 !important; align-items: center !important; 
+}}
     div.element-container:has(#top-menu-marker) {{ display: none !important; }}
     div[data-testid="stHorizontalBlock"]:has(#top-menu-marker) div[data-baseweb="select"] {{ border: none !important; background-color: transparent !important; box-shadow: none !important; cursor: pointer; }}
     div[data-testid="stHorizontalBlock"]:has(#top-menu-marker) div[data-baseweb="select"] * {{ color: #1f325c !important; font-weight: 700 !important; font-size: 15px !important; }}
@@ -246,7 +257,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. 데이터 로드 및 매핑
+# 3. 데이터 로드 및 매핑 (데이터 생략 없음)
 # ==========================================
 def apply_dc_correction(light_name, de_val):
     if "TL84" in light_name:
@@ -284,9 +295,8 @@ def load_dye_mapping(mode, _valid_keys):
 dye_db = load_dye_data(dye_mode)
 all_dyes_ordered, display_name_dict, missing_dyes, sort_order_dict = load_dye_mapping(dye_mode, dye_db.keys())
 
-# --- 광원 가중치 데이터 ---
+# --- 광원 가중치 데이터 (유지) ---
 wls_astm = np.arange(360, 790, 10)
-
 astm_a_x_vals = [0.000, 0.000, 0.000, 0.002, 0.025, 0.134, 0.377, 0.686, 0.964, 1.080, 1.006, 0.731, 0.343, 0.078, 0.022, 0.218, 0.750, 1.642, 2.842, 4.336, 6.200, 8.262, 10.227, 11.945, 12.746, 12.337, 10.817, 8.560, 6.014, 3.887, 2.309, 1.276, 0.666, 0.336, 0.166, 0.082, 0.040, 0.020, 0.010, 0.005, 0.003, 0.001, 0.001]
 astm_a_y_vals = [0.000, 0.000, 0.000, 0.000, 0.003, 0.014, 0.039, 0.084, 0.156, 0.259, 0.424, 0.696, 1.082, 1.616, 2.422, 3.529, 4.840, 6.100, 7.250, 8.114, 8.758, 8.988, 8.760, 8.304, 7.468, 6.323, 5.033, 3.744, 2.506, 1.560, 0.911, 0.499, 0.259, 0.130, 0.065, 0.032, 0.016, 0.008, 0.004, 0.002, 0.001, 0.001, 0.000]
 astm_a_z_vals = [0.000, 0.000, 0.000, 0.008, 0.110, 0.615, 1.792, 3.386, 4.944, 5.806, 5.812, 4.919, 3.300, 1.973, 1.152, 0.658, 0.382, 0.211, 0.102, 0.032, 0.001, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000]
@@ -627,9 +637,9 @@ def confirm_disp_action():
     st.session_state.selected_dyes = []
     st.session_state.run_calc = False
 
-@st.dialog("백포 선택 (Disperse)")
+@st.dialog("백포 선택 (Disperse)") # 다이얼로그 타이틀은 번역 지원이 어려워 그대로 둡니다. (Streamlit 제약)
 def disperse_dialog():
-    st.markdown("분산염료처방 탐색에 사용할 백포를 선택해주세요.")
+    st.markdown(t("분산염료처방 탐색에 사용할 백포를 선택해주세요.", "Select substrate to use for disperse dye recipe."))
     if "temp_disp" not in st.session_state: 
         st.session_state.temp_disp = st.session_state.disperse_sub
         
@@ -654,14 +664,16 @@ def disperse_dialog():
         )
             
     st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
-    if st.button("확인", use_container_width=True, type="primary", key="dlg_confirm_btn"):
+    if st.button(t("확인", "Confirm"), use_container_width=True, type="primary", key="dlg_confirm_btn"):
         confirm_disp_action()
         st.rerun()
 
 # ==========================================
 # 5. 상단 메뉴 및 좌측 사이드바 구성 
 # ==========================================
-top_menu_cols = st.columns([1, 1, 1.2, 1, 1])
+# 빈 공간(인덱스 5)의 비율을 6으로 대폭 늘려 우측 끝으로 밀어내기
+top_menu_cols = st.columns([1, 1, 1.2, 1, 1, 6, 0.6, 0.6]) 
+
 with top_menu_cols[0]:
     if st.button("Reactive", use_container_width=True, type="primary" if dye_mode == "Reactive" else "secondary", key="top_reactive_btn"):
         set_dye_mode("Reactive")
@@ -688,17 +700,28 @@ with top_menu_cols[4]:
         set_dye_mode("Acid")
         st.rerun()
 
+# --- 5번 인덱스 컬럼은 빈 공간 역할을 하므로 비워둡니다 ---
+
+with top_menu_cols[6]:
+    st.button("KR", use_container_width=True, type="primary" if st.session_state.lang == "KO" else "secondary", on_click=set_lang, args=("KO",), key="top_lang_ko")
+
+with top_menu_cols[7]:
+    st.button("EN", use_container_width=True, type="primary" if st.session_state.lang == "EN" else "secondary", on_click=set_lang, args=("EN",), key="top_lang_en")
+
 with st.sidebar:
     def clear_search(): st.session_state.search_query_input = ""
-    st.markdown(f"<div style='font-size: 14px; font-weight: bold; margin-bottom: 5px; display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:6px; font-size:18px;'>search</span>염료 검색</div>", unsafe_allow_html=True)
     
-    if missing_dyes: st.warning(f"데이터 부족 제외 염료 {len(missing_dyes)}개", icon=":material/warning:")
+    sidebar_title = t("염료 검색", "Search Dyes")
+    st.markdown(f"<div style='font-size: 14px; font-weight: bold; margin-bottom: 5px; display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:6px; font-size:18px;'>search</span>{sidebar_title}</div>", unsafe_allow_html=True)
+    
+    if missing_dyes: 
+        st.warning(t(f"데이터 부족 제외 염료 {len(missing_dyes)}개", f"Dyes excluded (missing data): {len(missing_dyes)}"), icon=":material/warning:")
     
     col_search, col_clear = st.columns([7.5, 2.5], vertical_alignment="center")
     with col_search:
-        search_query = st.text_input("염료 검색", placeholder="검색어 입력 후 Enter ↵", label_visibility="collapsed", key="search_query_input")
+        search_query = st.text_input(sidebar_title, placeholder=t("검색어 입력 후 Enter ↵", "Type to search ↵"), label_visibility="collapsed", key="search_query_input")
     with col_clear:
-        st.button("초기화", use_container_width=True, on_click=clear_search)
+        st.button(t("초기화", "Clear"), use_container_width=True, on_click=clear_search)
         
     dye_hex_dict = get_all_dye_hex_dict(st.session_state.dye_mode)
     filtered_dyes = []
@@ -737,7 +760,7 @@ with st.sidebar:
             st.button(display_name, key=f"dye_{raw_name}_{idx}", use_container_width=True, type=btn_type, on_click=toggle_dye, args=(raw_name,))
 
 # ------------------------------------------
-# 🌟 메인 화면 구성 (3분할 레이아웃 비율 수정: 좌측 넓게, 우측 좁게)
+# 🌟 메인 화면 구성
 # ------------------------------------------
 col_menu, col_graph, col_results = st.columns([1.3, 1.3, 1], gap="medium")
 
@@ -746,31 +769,38 @@ col_menu, col_graph, col_results = st.columns([1.3, 1.3, 1], gap="medium")
 # =======================================================
 with col_menu:
     with st.container(border=True):
-        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>settings</span>광원 설정</strong>", unsafe_allow_html=True)
+        st.markdown(f"<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>settings</span>{t('광원 설정', 'Light Source Settings')}</strong>", unsafe_allow_html=True)
         light_options_all = ["D65", "A", "CWF (F02)", "TL84 (F11)", "TL83", "U3000 (F12)", "U3500", "LED35K", "LED_B1", "LED_T8G"]
-        light_options_optional = ["없음"] + light_options_all
+        
+        # 내부 로직 연결을 위해 값은 그대로 쓰고 화면 표시만 변경
+        none_label = t("없음", "None")
+        light_options_optional = [none_label] + light_options_all
         
         l_col1, l_col2, l_col3 = st.columns(3)
-        light1_name = l_col1.selectbox("1차", light_options_all, key="l1", index=light_options_all.index("D65"))
-        light2_name = l_col2.selectbox("2차", light_options_optional, key="l2", index=light_options_optional.index("CWF (F02)")) 
-        light3_name = l_col3.selectbox("3차", light_options_optional, key="l3", index=light_options_optional.index("없음")) 
+        light1_name = l_col1.selectbox(t("1차", "Primary"), light_options_all, key="l1", index=light_options_all.index("D65"))
+        light2_name = l_col2.selectbox(t("2차", "Secondary"), light_options_optional, key="l2", index=light_options_optional.index("CWF (F02)")) 
+        light3_name = l_col3.selectbox(t("3차", "Tertiary"), light_options_optional, key="l3", index=light_options_optional.index(none_label)) 
+        
+        # 로직 연동을 위해 영문 None을 다시 원문으로 맵핑
+        if light2_name == "None": light2_name = "없음"
+        if light3_name == "None": light3_name = "없음"
 
     with st.container(border=True):
-        st.markdown("<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>데이터 입력 (QTX 또는 직접 측정)</strong>", unsafe_allow_html=True)
+        st.markdown(f"<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>{t('데이터 입력 (QTX 또는 직접 측정)', 'Data Input (QTX or Direct Measure)')}</strong>", unsafe_allow_html=True)
         
-        tab1, tab2 = st.tabs([":material/folder_open: QTX 파일 업로드", ":material/sensors: 기기 직접 측정"])
+        tab1, tab2 = st.tabs([t(":material/folder_open: QTX 파일 업로드", ":material/folder_open: Upload QTX"), t(":material/sensors: 기기 직접 측정", ":material/sensors: Direct Measure")])
         
         with tab1:
-            uploaded_file = st.file_uploader("QTX 파일 업로드", type=['qtx'], label_visibility="collapsed")
+            uploaded_file = st.file_uploader(t("QTX 파일 업로드", "Upload QTX File"), type=['qtx'], label_visibility="collapsed")
             
         with tab2:
-            st.caption("Datacolor 장비(COM3)에서 샘플을 직접 측정합니다.")
-            measure_type = st.radio("측정 대상", ["Standard", "Batch"], horizontal=True)
+            st.caption(t("Datacolor 장비(COM3)에서 샘플을 직접 측정합니다.", "Measure sample directly from Datacolor device (COM3)."))
+            measure_type = st.radio(t("측정 대상", "Target Type"), ["Standard", "Batch"], horizontal=True)
             
             col_name, col_btn = st.columns([7, 3])
-            sample_name = col_name.text_input("샘플 이름", value="Live_Sample_01", label_visibility="collapsed")
-            if col_btn.button("측정 시작", use_container_width=True, type="primary"):
-                with st.spinner("플래시 대기 중..."):
+            sample_name = col_name.text_input(t("샘플 이름", "Sample Name"), value="Live_Sample_01", label_visibility="collapsed")
+            if col_btn.button(t("측정 시작", "Start Measure"), use_container_width=True, type="primary"):
+                with st.spinner(t("플래시 대기 중...", "Waiting for flash...")):
                     r_35_data = measure_datacolor()
                     if r_35_data is not None:
                         new_data = {
@@ -783,9 +813,8 @@ with col_menu:
                             st.session_state.live_standards = [new_data]
                         else: 
                             st.session_state.live_batches.append(new_data)
-                        st.success(f"{sample_name} 측정 성공!")
+                        st.success(f"{sample_name} {t('측정 성공!', 'measured successfully!')}")
 
-        # --- QTX와 실시간 측정 데이터 병합 ---
         standards = []
         batches = []
         
@@ -801,9 +830,9 @@ with col_menu:
         edited_df = None
         if (standards or batches) and len(st.session_state.selected_dyes) > 0:
             if standards and batches:
-                st.success(f"타겟(STD): **{standards[0]['name']}**", icon=":material/my_location:")
+                st.success(f"{t('타겟(STD):', 'Target (STD):')} **{standards[0]['name']}**", icon=":material/my_location:")
                 all_bat_names = [b['name'] for b in batches]
-                selected_bat_names = st.multiselect("분석할 현장 배치(BAT)를 선택하세요", options=all_bat_names, default=[all_bat_names[0]])
+                selected_bat_names = st.multiselect(t("분석할 현장 배치(BAT)를 선택하세요", "Select batch (BAT) to analyze"), options=all_bat_names, default=[all_bat_names[0]])
                 
                 if selected_bat_names:
                     selected_raw_dyes = sorted(st.session_state.selected_dyes, key=lambda x: sort_order_dict.get(x, 999.0))
@@ -812,29 +841,29 @@ with col_menu:
                     df_input = pd.DataFrame(0.0, index=[display_name_dict.get(d, d) for d in selected_raw_dyes], columns=col_names)
                     
                     unit_label = "g/l" if st.session_state.dye_mode == "Reactive (CPB)" else "%"
-                    st.caption(f"※ 실제 배합된 레시피 투입량({unit_label})을 입력해 주세요.")
+                    st.caption(f"※ {t('실제 배합된 레시피 투입량', 'Enter actual recipe dosage')} ({unit_label})")
                     edited_df = st.data_editor(df_input, use_container_width=True)
                     
-                    if st.button("스마트 매치 분석 실행", type="primary", use_container_width=True, icon=":material/rocket_launch:"):
+                    if st.button(t("스마트 매치 분석 실행", "Run Smart Match Analysis"), type="primary", use_container_width=True, icon=":material/rocket_launch:"):
                         st.session_state.run_calc = True
                 else:
-                    st.warning("분석할 배치를 최소 1개 이상 선택해 주세요.", icon=":material/warning:")
+                    st.warning(t("분석할 배치를 최소 1개 이상 선택해 주세요.", "Please select at least 1 batch."), icon=":material/warning:")
                     st.session_state.run_calc = False
             else:
-                st.error("STANDARD 또는 BATCH 데이터가 부족합니다.", icon=":material/error:")
+                st.error(t("STANDARD 또는 BATCH 데이터가 부족합니다.", "Insufficient STANDARD or BATCH data."), icon=":material/error:")
                 st.session_state.run_calc = False
         else:
             if not (standards or batches): 
-                st.info("QTX 파일을 업로드하거나 샘플을 직접 측정해 주세요.", icon=":material/info:")
+                st.info(t("QTX 파일을 업로드하거나 샘플을 직접 측정해 주세요.", "Upload a QTX file or measure samples directly."), icon=":material/info:")
             elif len(st.session_state.selected_dyes) == 0: 
-                st.warning("사이드바에서 처방에 사용된 염료를 선택해 주세요.", icon=":material/warning:")
+                st.warning(t("사이드바에서 처방에 사용된 염료를 선택해 주세요.", "Select dyes used in the recipe from the sidebar."), icon=":material/warning:")
             st.session_state.run_calc = False
 
 # =======================================================
 # 📌 [중앙] 2. 색상 좌표(그래프) 및 Delta 데이터 표 
 # =======================================================
 with col_graph:
-    st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>monitoring</span>타겟 vs 현장 분석", unsafe_allow_html=True)
+    st.markdown(f"### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>monitoring</span>{t('타겟 vs 현장 분석', 'Target vs Batch Analysis')}", unsafe_allow_html=True)
     
     if (standards and batches) and 'selected_bat_names' in locals() and selected_bat_names:
         import plotly.graph_objects as go
@@ -843,7 +872,7 @@ with col_graph:
         active_lights = [l for l in [light1_name, light2_name, light3_name] if l != "없음"]
         
         with st.container(border=True):
-            st.markdown(f"<div style='display: flex; align-items: center; font-weight: bold;'><span class='material-symbols-outlined' style='margin-right:6px;'>scatter_plot</span> 1. 색상 오차 (Da* vs Db*) 분포도 - [{active_lights[0]} 기준]</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='display: flex; align-items: center; font-weight: bold;'><span class='material-symbols-outlined' style='margin-right:6px;'>scatter_plot</span> 1. {t('색상 오차 (Da* vs Db*) 분포도', 'Color Error (Da* vs Db*) Plot')} - [{active_lights[0]} 기준]</div>", unsafe_allow_html=True)
             std_lab_1 = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
             fig = go.Figure()
             
@@ -883,7 +912,7 @@ with col_graph:
             fig.add_annotation(x=max_range*0.95, y=0.03, text="<b>Redder (Da* +) →</b>", showarrow=False, font=dict(color="#d32f2f", size=12), xanchor="right")
             
             fig.update_layout(
-                xaxis_title="Da* (적/녹 방향)", yaxis_title="Db* (황/청 방향)", hovermode="closest",
+                xaxis_title="Da*", yaxis_title="Db*", hovermode="closest",
                 margin=dict(l=10, r=10, t=10, b=10), height=350, plot_bgcolor='white',
                 xaxis=dict(range=[-max_range, max_range], showgrid=True, gridcolor='#eaeaea', zeroline=True, zerolinewidth=2, zerolinecolor='rgba(0,0,0,0.2)'),
                 yaxis=dict(range=[-max_range, max_range], showgrid=True, gridcolor='#eaeaea', zeroline=True, zerolinewidth=2, zerolinecolor='rgba(0,0,0,0.2)'),
@@ -891,7 +920,7 @@ with col_graph:
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': True})
             
-            st.markdown("<div style='display: flex; align-items: center; font-weight: bold; margin-top: 20px;'><span class='material-symbols-outlined' style='margin-right:6px;'>table_chart</span> 2. Datacolor 산출 비교표 (광원별 오차값)</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='display: flex; align-items: center; font-weight: bold; margin-top: 20px;'><span class='material-symbols-outlined' style='margin-right:6px;'>table_chart</span> 2. {t('Datacolor 산출 비교표 (광원별 오차값)', 'Datacolor Delta Comparison')}</div>", unsafe_allow_html=True)
             for b in active_batches_for_view:
                 batch_records = []
                 std_lab_base = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
@@ -933,7 +962,7 @@ with col_graph:
 # 📌 [우측] 3. 역산 분석 및 보정 추천 처방
 # =======================================================
 with col_results:
-    st.markdown("### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>science</span>역산 및 보정 처방", unsafe_allow_html=True)
+    st.markdown(f"### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>science</span>{t('역산 및 보정 처방', 'Correction Recipe')}", unsafe_allow_html=True)
     
     if st.session_state.get('run_calc', False) and edited_df is not None:
         std_data = standards[0]
@@ -947,7 +976,7 @@ with col_results:
             
         bat_expected_recipes = [bat_actual_recipes[0] for _ in range(len(active_batches))]
         
-        with st.spinner("스마트 매칭 분석 중..."):
+        with st.spinner(t("스마트 매칭 분석 중...", "Analyzing Smart Match...")):
             
             global_cf_dict = load_correction_factors()
             
@@ -985,16 +1014,19 @@ with col_results:
             if result['success']:
                 with st.container(border=True):
                     
-                    st.markdown("#### 1. 최종 보정 처방 제안")
+                    st.markdown(f"#### 1. {t('최종 보정 처방 제안', 'Final Correction Recipe Proposal')}")
                     final_rec = result['final_recipe']
                     
+                    col_dye = t("염료명", "Dye Name")
+                    col_rec = t("보정 추천량 (%)", "Rec. Dosage (%)")
+                    
                     final_df = pd.DataFrame({
-                        "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                        "보정 추천량 (%)": [round(c, 4) for c in final_rec]
+                        col_dye: [display_name_dict.get(d, d) for d in selected_raw_dyes],
+                        col_rec: [round(c, 4) for c in final_rec]
                     })
                     
-                    styled_final_df = final_df.style.format({"보정 추천량 (%)": "{:.4f}"}).set_properties(
-                        subset=['보정 추천량 (%)'], 
+                    styled_final_df = final_df.style.format({col_rec: "{:.4f}"}).set_properties(
+                        subset=[col_rec], 
                         **{'color': '#1976d2', 'font-weight': 'bold', 'font-size': '15px'}
                     )
                     
@@ -1002,11 +1034,11 @@ with col_results:
                     
                     st.markdown("---")
                     
-                    st.markdown("<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>database</span>2. 데이터베이스(DB) 누적 기록</h4>", unsafe_allow_html=True)
-                    st.caption("💡 1차, 2차, 3차 상관없이 역산 분석을 완료했다면 모두 저장해 주세요. 실패한 데이터도 AI 학습의 훌륭한 자양분이 됩니다.")
+                    st.markdown(f"<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>database</span>2. {t('데이터베이스(DB) 누적 기록', 'Save to Database (DB)')}</h4>", unsafe_allow_html=True)
+                    st.caption(t("💡 1차, 2차, 3차 상관없이 역산 분석을 완료했다면 모두 저장해 주세요. 실패한 데이터도 AI 학습의 훌륭한 자양분이 됩니다.", "💡 Save results to improve AI model training regardless of outcomes."))
                     
-                    if st.button("🚀 현재 분석 결과 DB에 누적 저장하기", type="primary", use_container_width=True):
-                        with st.spinner("구글 시트에 데이터를 기록하고 있습니다..."):
+                    if st.button(t("🚀 현재 분석 결과 DB에 누적 저장하기", "🚀 Save Current Analysis to DB"), type="primary", use_container_width=True):
+                        with st.spinner(t("구글 시트에 데이터를 기록하고 있습니다...", "Saving data to Google Sheets...")):
                             is_saved = save_to_google_sheet(
                                 result_data=result, 
                                 active_batches=active_batches, 
@@ -1018,11 +1050,15 @@ with col_results:
                                 primary_light=light1_name
                             )
                         if is_saved:
-                            st.success("완벽합니다! 분석된 산출값과 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", icon=":material/check_circle:")
+                            st.success(t("완벽합니다! 분석된 산출값과 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", "Perfect! Data successfully recorded."), icon=":material/check_circle:")
                             
                     st.markdown("---")
                     
-                    st.markdown(f"#### 3. 역산 효율 상세 분석")
+                    st.markdown(f"#### 3. {t('역산 효율 상세 분석', 'Detailed Efficiency Analysis')}")
+                    
+                    col_actual = t("실제 투입", "Actual")
+                    col_calc = t("역산 산출", "Calculated")
+                    col_eff = t("역산 효율", "Efficiency")
                     
                     for i, b_info in enumerate(active_batches):
                         b_name = b_info['name']
@@ -1030,14 +1066,14 @@ with col_results:
                         actual_bat_rec = bat_actual_recipes[i]
                         batch_cf = result['batch_cfs'][i]
                         
-                        st.markdown(f"<div style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:4px; font-size: 18px;'>arrow_right</span> <b>{b_name} 효율 분석</b></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:4px; font-size: 18px;'>arrow_right</span> <b>{b_name} {t('효율 분석', 'Efficiency Analysis')}</b></div>", unsafe_allow_html=True)
                         batch_df = pd.DataFrame({
-                            "염료명": [display_name_dict.get(d, d) for d in selected_raw_dyes],
-                            f"실제 투입": [round(c, 4) for c in actual_bat_rec],
-                            f"역산 산출": [round(c, 4) for c in calc_bat_rec],
-                            "역산 효율": [f"{cf*100:.1f}%" for cf in batch_cf]
+                            col_dye: [display_name_dict.get(d, d) for d in selected_raw_dyes],
+                            col_actual: [round(c, 4) for c in actual_bat_rec],
+                            col_calc: [round(c, 4) for c in calc_bat_rec],
+                            col_eff: [f"{cf*100:.1f}%" for cf in batch_cf]
                         })
-                        st.dataframe(batch_df.style.format({f"실제 투입": "{:.4f}", f"역산 산출": "{:.4f}"}), hide_index=True, use_container_width=True)
+                        st.dataframe(batch_df.style.format({col_actual: "{:.4f}", col_calc: "{:.4f}"}), hide_index=True, use_container_width=True)
 
             else: 
-                st.error("보정 처방 산출에 실패했습니다.", icon=":material/error:")
+                st.error(t("보정 처방 산출에 실패했습니다.", "Failed to calculate correction recipe."), icon=":material/error:")
