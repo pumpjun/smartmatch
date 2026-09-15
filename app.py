@@ -23,7 +23,7 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="SpectraMatch", page_icon="logo.png")
 
 # ==========================================
-# 🌐 다국어(한/영) 지원 설정
+# 🌐 다국어(한/영/베) 지원 설정
 # ==========================================
 if "lang" not in st.session_state: 
     st.session_state.lang = "KO"
@@ -31,8 +31,13 @@ if "lang" not in st.session_state:
 def set_lang(lang_code):
     st.session_state.lang = lang_code
 
-def t(ko_text, en_text):
-    return ko_text if st.session_state.lang == "KO" else en_text
+def t(ko_text, en_text, vi_text=None):
+    if st.session_state.lang == "KO":
+        return ko_text
+    elif st.session_state.lang == "VI":
+        return vi_text if vi_text else en_text  # 베트남어 텍스트가 없으면 영어 출력
+    else:
+        return en_text
 
 # ==========================================
 # 구글 시트 연결 및 조제표 자동 매칭 함수
@@ -671,8 +676,8 @@ def disperse_dialog():
 # ==========================================
 # 5. 상단 메뉴 및 좌측 사이드바 구성 
 # ==========================================
-# 빈 공간(인덱스 5)의 비율을 6으로 대폭 늘려 우측 끝으로 밀어내기
-top_menu_cols = st.columns([1, 1, 1.2, 1, 1, 6, 0.6, 0.6]) 
+# 드롭다운이 들어갈 마지막 컬럼의 넓이를 늘려줍니다.
+top_menu_cols = st.columns([1, 1, 1.2, 1, 1, 6, 0.2, 1.0]) 
 
 with top_menu_cols[0]:
     if st.button("Reactive", use_container_width=True, type="primary" if dye_mode == "Reactive" else "secondary", key="top_reactive_btn"):
@@ -700,13 +705,31 @@ with top_menu_cols[4]:
         set_dye_mode("Acid")
         st.rerun()
 
-# --- 5번 인덱스 컬럼은 빈 공간 역할을 하므로 비워둡니다 ---
+# --- 5, 6번 인덱스 컬럼은 빈 공간 역할을 하므로 비워둡니다 ---
 
-with top_menu_cols[6]:
-    st.button("KR", use_container_width=True, type="primary" if st.session_state.lang == "KO" else "secondary", on_click=set_lang, args=("KO",), key="top_lang_ko")
-
+# 언어 변환 드롭다운을 우측 끝(8번째 컬럼)에 배치
 with top_menu_cols[7]:
-    st.button("EN", use_container_width=True, type="primary" if st.session_state.lang == "EN" else "secondary", on_click=set_lang, args=("EN",), key="top_lang_en")
+    lang_options = {
+        "KO": "🌐 KOR", 
+        "EN": "🌐 ENG",
+        "VI": "🌐 VIE"
+    } 
+    
+    current_idx = list(lang_options.keys()).index(st.session_state.lang) if st.session_state.lang in lang_options else 0
+    
+    selected_lang_label = st.selectbox(
+        "Language",
+        options=list(lang_options.values()),
+        index=current_idx,
+        label_visibility="collapsed",
+        key="lang_dropdown"
+    )
+    
+    selected_code = [k for k, v in lang_options.items() if v == selected_lang_label][0]
+    
+    if selected_code != st.session_state.lang:
+        st.session_state.lang = selected_code
+        st.rerun()
 
 with st.sidebar:
     def clear_search(): st.session_state.search_query_input = ""
@@ -769,21 +792,31 @@ col_menu, col_graph, col_results = st.columns([1.3, 1.3, 1], gap="medium")
 # =======================================================
 with col_menu:
     with st.container(border=True):
-        st.markdown(f"<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>settings</span>{t('광원 설정', 'Light Source Settings')}</strong>", unsafe_allow_html=True)
+        st.markdown(f"<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>settings</span>{t('광원 설정', 'Light Source Settings', 'Cài đặt Nguồn sáng')}</strong>", unsafe_allow_html=True)
         light_options_all = ["D65", "A", "CWF (F02)", "TL84 (F11)", "TL83", "U3000 (F12)", "U3500", "LED35K", "LED_B1", "LED_T8G"]
         
-        # 내부 로직 연결을 위해 값은 그대로 쓰고 화면 표시만 변경
-        none_label = t("없음", "None")
-        light_options_optional = [none_label] + light_options_all
+        # 내부 값을 '없음'으로 고정하고 리스트 구성
+        light_options_optional = ["없음"] + light_options_all
+        
+        # 화면 표시(UI)만 언어에 맞게 바꿔주는 포맷 함수
+        def format_light(x):
+            if x == "없음":
+                return t("없음", "None", "Không")
+            return x
+        
+        # 현재 세션 값 기준으로 기본 인덱스 설정
+        idx1 = light_options_all.index(st.session_state.l1) if st.session_state.l1 in light_options_all else 0
+        idx2 = light_options_optional.index(st.session_state.l2) if st.session_state.l2 in light_options_optional else light_options_optional.index("CWF (F02)")
+        idx3 = light_options_optional.index(st.session_state.l3) if st.session_state.l3 in light_options_optional else 0
         
         l_col1, l_col2, l_col3 = st.columns(3)
-        light1_name = l_col1.selectbox(t("1차", "Primary"), light_options_all, key="l1", index=light_options_all.index("D65"))
-        light2_name = l_col2.selectbox(t("2차", "Secondary"), light_options_optional, key="l2", index=light_options_optional.index("CWF (F02)")) 
-        light3_name = l_col3.selectbox(t("3차", "Tertiary"), light_options_optional, key="l3", index=light_options_optional.index(none_label)) 
+        light1_name = l_col1.selectbox(t("1차", "Primary", "Cấp 1"), light_options_all, key="l1", index=idx1)
         
-        # 로직 연동을 위해 영문 None을 다시 원문으로 맵핑
-        if light2_name == "None": light2_name = "없음"
-        if light3_name == "None": light3_name = "없음"
+        # format_func를 추가하여 내부 값("없음")과 UI 표시("None", "Không")를 완벽히 분리
+        light2_name = l_col2.selectbox(t("2차", "Secondary", "Cấp 2"), light_options_optional, key="l2", index=idx2, format_func=format_light) 
+        light3_name = l_col3.selectbox(t("3차", "Tertiary", "Cấp 3"), light_options_optional, key="l3", index=idx3, format_func=format_light) 
+        
+        # (이전에 영문 None을 다시 원문으로 매핑하던 코드는 더 이상 필요 없으므로 삭제)
 
     with st.container(border=True):
         st.markdown(f"<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>{t('데이터 입력 (QTX 또는 직접 측정)', 'Data Input (QTX or Direct Measure)')}</strong>", unsafe_allow_html=True)
@@ -863,7 +896,7 @@ with col_menu:
 # 📌 [중앙] 2. 색상 좌표(그래프) 및 Delta 데이터 표 
 # =======================================================
 with col_graph:
-    st.markdown(f"### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>monitoring</span>{t('타겟 vs 현장 분석', 'Target vs Batch Analysis')}", unsafe_allow_html=True)
+    st.markdown(f"### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>monitoring</span>{t('타겟 vs 현장 분석', 'Target vs Batch Analysis', 'Phân tích Mục tiêu vs Thực tế')}", unsafe_allow_html=True)
     
     if (standards and batches) and 'selected_bat_names' in locals() and selected_bat_names:
         import plotly.graph_objects as go
@@ -872,7 +905,7 @@ with col_graph:
         active_lights = [l for l in [light1_name, light2_name, light3_name] if l != "없음"]
         
         with st.container(border=True):
-            st.markdown(f"<div style='display: flex; align-items: center; font-weight: bold;'><span class='material-symbols-outlined' style='margin-right:6px;'>scatter_plot</span> 1. {t('색상 오차 (Da* vs Db*) 분포도', 'Color Error (Da* vs Db*) Plot')} - [{active_lights[0]} 기준]</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='display: flex; align-items: center; font-weight: bold;'><span class='material-symbols-outlined' style='margin-right:6px;'>scatter_plot</span> 1. {t('색상 오차 (Da* vs Db*) 분포도', 'Color Error (Da* vs Db*) Plot', 'Biểu đồ sai lệch màu sắc (Da* vs Db*)')} - [{active_lights[0]} {t('기준', 'Base', 'Tiêu chuẩn')}]</div>", unsafe_allow_html=True)
             std_lab_1 = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
             fig = go.Figure()
             
@@ -906,10 +939,10 @@ with col_graph:
                     name=f"{p['name']}", text=[p['name']], textposition="bottom center", textfont=dict(color=c, size=13, weight='bold')
                 ))
             
-            fig.add_annotation(x=0, y=max_range*0.95, text="<b>↑ Yellower (Db* +)</b>", showarrow=False, font=dict(color="#f57c00", size=12))
-            fig.add_annotation(x=0, y=-max_range*0.95, text="<b>↓ Bluer (Db* -)</b>", showarrow=False, font=dict(color="#1976d2", size=12))
-            fig.add_annotation(x=-max_range*0.95, y=0.03, text="<b>← Greener (Da* -)</b>", showarrow=False, font=dict(color="#388e3c", size=12), xanchor="left")
-            fig.add_annotation(x=max_range*0.95, y=0.03, text="<b>Redder (Da* +) →</b>", showarrow=False, font=dict(color="#d32f2f", size=12), xanchor="right")
+            fig.add_annotation(x=0, y=max_range*0.95, text=f"<b>↑ {t('Yellower', 'Yellower', 'Vàng hơn')} (Db* +)</b>", showarrow=False, font=dict(color="#f57c00", size=12))
+            fig.add_annotation(x=0, y=-max_range*0.95, text=f"<b>↓ {t('Bluer', 'Bluer', 'Xanh lam hơn')} (Db* -)</b>", showarrow=False, font=dict(color="#1976d2", size=12))
+            fig.add_annotation(x=-max_range*0.95, y=0.03, text=f"<b>← {t('Greener', 'Greener', 'Xanh lục hơn')} (Da* -)</b>", showarrow=False, font=dict(color="#388e3c", size=12), xanchor="left")
+            fig.add_annotation(x=max_range*0.95, y=0.03, text=f"<b>{t('Redder', 'Redder', 'Đỏ hơn')} (Da* +) →</b>", showarrow=False, font=dict(color="#d32f2f", size=12), xanchor="right")
             
             fig.update_layout(
                 xaxis_title="Da*", yaxis_title="Db*", hovermode="closest",
@@ -920,7 +953,7 @@ with col_graph:
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': True})
             
-            st.markdown(f"<div style='display: flex; align-items: center; font-weight: bold; margin-top: 20px;'><span class='material-symbols-outlined' style='margin-right:6px;'>table_chart</span> 2. {t('Datacolor 산출 비교표 (광원별 오차값)', 'Datacolor Delta Comparison')}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='display: flex; align-items: center; font-weight: bold; margin-top: 20px;'><span class='material-symbols-outlined' style='margin-right:6px;'>table_chart</span> 2. {t('Datacolor 산출 비교표 (광원별 오차값)', 'Datacolor Delta Comparison', 'Bảng so sánh Delta từ Datacolor (Theo nguồn sáng)')}</div>", unsafe_allow_html=True)
             for b in active_batches_for_view:
                 batch_records = []
                 std_lab_base = calculate_lab_exact(std_data_res['r_35'][4:35], active_lights[0])
@@ -962,7 +995,7 @@ with col_graph:
 # 📌 [우측] 3. 역산 분석 및 보정 추천 처방
 # =======================================================
 with col_results:
-    st.markdown(f"### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>science</span>{t('역산 및 보정 처방', 'Correction Recipe')}", unsafe_allow_html=True)
+    st.markdown(f"### <span class='material-symbols-outlined' style='font-size:26px; vertical-align: middle; margin-right:8px;'>science</span>{t('역산 및 보정 처방', 'Correction Recipe', 'Công thức Điều chỉnh & Đảo ngược')}", unsafe_allow_html=True)
     
     if st.session_state.get('run_calc', False) and edited_df is not None:
         std_data = standards[0]
@@ -976,7 +1009,7 @@ with col_results:
             
         bat_expected_recipes = [bat_actual_recipes[0] for _ in range(len(active_batches))]
         
-        with st.spinner(t("스마트 매칭 분석 중...", "Analyzing Smart Match...")):
+        with st.spinner(t("스마트 매칭 분석 중...", "Analyzing Smart Match...", "Đang phân tích Smart Match...")):
             
             global_cf_dict = load_correction_factors()
             
@@ -1014,11 +1047,11 @@ with col_results:
             if result['success']:
                 with st.container(border=True):
                     
-                    st.markdown(f"#### 1. {t('최종 보정 처방 제안', 'Final Correction Recipe Proposal')}")
+                    st.markdown(f"#### 1. {t('최종 보정 처방 제안', 'Final Correction Recipe Proposal', 'Đề xuất công thức điều chỉnh cuối cùng')}")
                     final_rec = result['final_recipe']
                     
-                    col_dye = t("염료명", "Dye Name")
-                    col_rec = t("보정 추천량 (%)", "Rec. Dosage (%)")
+                    col_dye = t("염료명", "Dye Name", "Tên thuốc nhuộm")
+                    col_rec = t("보정 추천량 (%)", "Rec. Dosage (%)", "Liều lượng khuyến nghị (%)")
                     
                     final_df = pd.DataFrame({
                         col_dye: [display_name_dict.get(d, d) for d in selected_raw_dyes],
@@ -1034,11 +1067,11 @@ with col_results:
                     
                     st.markdown("---")
                     
-                    st.markdown(f"<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>database</span>2. {t('데이터베이스(DB) 누적 기록', 'Save to Database (DB)')}</h4>", unsafe_allow_html=True)
-                    st.caption(t("💡 1차, 2차, 3차 상관없이 역산 분석을 완료했다면 모두 저장해 주세요. 실패한 데이터도 AI 학습의 훌륭한 자양분이 됩니다.", "💡 Save results to improve AI model training regardless of outcomes."))
+                    st.markdown(f"<h4 style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:8px;'>database</span>2. {t('데이터베이스(DB) 누적 기록', 'Save to Database (DB)', 'Lưu vào Cơ sở dữ liệu (DB)')}</h4>", unsafe_allow_html=True)
+                    st.caption(t("💡 1차, 2차, 3차 상관없이 역산 분석을 완료했다면 모두 저장해 주세요. 실패한 데이터도 AI 학습의 훌륭한 자양분이 됩니다.", "💡 Save results to improve AI model training regardless of outcomes.", "💡 Vui lòng lưu kết quả sau khi phân tích để cải thiện dữ liệu huấn luyện AI cho dù kết quả ra sao."))
                     
-                    if st.button(t("🚀 현재 분석 결과 DB에 누적 저장하기", "🚀 Save Current Analysis to DB"), type="primary", use_container_width=True):
-                        with st.spinner(t("구글 시트에 데이터를 기록하고 있습니다...", "Saving data to Google Sheets...")):
+                    if st.button(t("🚀 현재 분석 결과 DB에 누적 저장하기", "🚀 Save Current Analysis to DB", "🚀 Lưu kết quả phân tích hiện tại vào DB"), type="primary", use_container_width=True):
+                        with st.spinner(t("구글 시트에 데이터를 기록하고 있습니다...", "Saving data to Google Sheets...", "Đang lưu dữ liệu vào Google Sheets...")):
                             is_saved = save_to_google_sheet(
                                 result_data=result, 
                                 active_batches=active_batches, 
@@ -1050,15 +1083,15 @@ with col_results:
                                 primary_light=light1_name
                             )
                         if is_saved:
-                            st.success(t("완벽합니다! 분석된 산출값과 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", "Perfect! Data successfully recorded."), icon=":material/check_circle:")
+                            st.success(t("완벽합니다! 분석된 산출값과 색상 좌표가 성공적으로 클라우드 DB에 기록되었습니다.", "Perfect! Data successfully recorded.", "Hoàn hảo! Dữ liệu đã được ghi vào Cloud DB thành công."), icon=":material/check_circle:")
                             
                     st.markdown("---")
                     
-                    st.markdown(f"#### 3. {t('역산 효율 상세 분석', 'Detailed Efficiency Analysis')}")
+                    st.markdown(f"#### 3. {t('역산 효율 상세 분석', 'Detailed Efficiency Analysis', 'Phân tích chi tiết hiệu suất tính toán')}")
                     
-                    col_actual = t("실제 투입", "Actual")
-                    col_calc = t("역산 산출", "Calculated")
-                    col_eff = t("역산 효율", "Efficiency")
+                    col_actual = t("실제 투입", "Actual", "Thực tế")
+                    col_calc = t("역산 산출", "Calculated", "Tính toán")
+                    col_eff = t("역산 효율", "Efficiency", "Hiệu suất")
                     
                     for i, b_info in enumerate(active_batches):
                         b_name = b_info['name']
@@ -1066,7 +1099,7 @@ with col_results:
                         actual_bat_rec = bat_actual_recipes[i]
                         batch_cf = result['batch_cfs'][i]
                         
-                        st.markdown(f"<div style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:4px; font-size: 18px;'>arrow_right</span> <b>{b_name} {t('효율 분석', 'Efficiency Analysis')}</b></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:4px; font-size: 18px;'>arrow_right</span> <b>{b_name} {t('효율 분석', 'Efficiency Analysis', 'Phân tích hiệu suất')}</b></div>", unsafe_allow_html=True)
                         batch_df = pd.DataFrame({
                             col_dye: [display_name_dict.get(d, d) for d in selected_raw_dyes],
                             col_actual: [round(c, 4) for c in actual_bat_rec],
@@ -1076,4 +1109,4 @@ with col_results:
                         st.dataframe(batch_df.style.format({col_actual: "{:.4f}", col_calc: "{:.4f}"}), hide_index=True, use_container_width=True)
 
             else: 
-                st.error(t("보정 처방 산출에 실패했습니다.", "Failed to calculate correction recipe."), icon=":material/error:")
+                st.error(t("보정 처방 산출에 실패했습니다.", "Failed to calculate correction recipe.", "Không thể tính toán công thức điều chỉnh."), icon=":material/error:")
