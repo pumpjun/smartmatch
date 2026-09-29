@@ -193,7 +193,8 @@ def load_correction_factors():
         return {} 
 
 if "dye_mode" not in st.session_state: st.session_state.dye_mode = "Reactive"
-if "disperse_sub" not in st.session_state: st.session_state.disperse_sub = "Jersey"
+# Jersey를 Interlock으로 변경
+if "disperse_sub" not in st.session_state: st.session_state.disperse_sub = "Interlock"
 if "selected_dyes" not in st.session_state: st.session_state.selected_dyes = []
 if "run_calc" not in st.session_state: st.session_state.run_calc = False
 
@@ -262,7 +263,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. 데이터 로드 및 매핑 (데이터 생략 없음)
+# 3. 데이터 로드 및 매핑 (Woven, Interlock 구분 로직 적용)
 # ==========================================
 def apply_dc_correction(light_name, de_val):
     if "TL84" in light_name:
@@ -271,24 +272,62 @@ def apply_dc_correction(light_name, de_val):
     return de_val
 
 @st.cache_data
-def load_dye_data(mode):
-    file_map = {"Reactive": 'dye_data.json', "Disperse": 'dye_data_disperse.json', "Reactive (CPB)": 'dye_data_cpb.json', "CDP": 'dye_data_CDP.json', "Acid": 'dye_data_acid.json'}
+def load_dye_data(mode, sub_mode="Interlock"):
+    file_map = {
+        "Reactive": 'dye_data.json', 
+        "Disperse": 'dye_data_disperse.json', # Disperse - Interlock 기본 파일
+        "Reactive (CPB)": 'dye_data_cpb.json', 
+        "CDP": 'dye_data_CDP.json', 
+        "Acid": 'dye_data_acid.json'
+    }
+    
+    json_file = file_map.get(mode, 'dye_data.json')
+    
+    # Disperse 모드이면서 Woven 백포를 선택한 경우
+    if mode == "Disperse" and sub_mode == "Woven":
+        json_file = 'dye_data_woven.json'
+
     try:
-        with open(file_map.get(mode, 'dye_data.json'), 'r', encoding='utf-8') as f:
+        with open(json_file, 'r', encoding='utf-8') as f:
             raw_data = json.load(f)
             return {name.strip(): concs for name, concs in raw_data.items() if len(concs) > 0}
-    except Exception: return {}
+    except Exception: 
+        return {}
 
 @st.cache_data
-def load_dye_mapping(mode, _valid_keys):
-    file_map = {"Reactive": 'dye_list.xlsx', "Disperse": 'dis_dye_list.xlsx', "Reactive (CPB)": 'cpb_dye_list.xlsx', "CDP": 'CDP_dye_list.xlsx', "Acid": 'acid_dye_list.xlsx'}
+def load_dye_mapping(mode, sub_mode, _valid_keys):
+    file_map = {
+        "Reactive": 'dye_list.xlsx', 
+        "Disperse": 'dis_dye_list.xlsx', 
+        "Reactive (CPB)": 'cpb_dye_list.xlsx', 
+        "CDP": 'CDP_dye_list.xlsx', 
+        "Acid": 'acid_dye_list.xlsx'
+    }
     try:
         df = pd.read_excel(file_map.get(mode, 'dye_list.xlsx'), header=None)
         mapping_list, disp_dict, missing_dyes, sort_order_dict = [], {}, [], {}
         for _, row in df.iterrows():
             try: sort_val = float(row[0]) if pd.notna(row[0]) else 999.0
             except: sort_val = 999.0
-            raw_name, display_name = str(row[1]).strip(), str(row[2]).strip()
+            
+            if mode == "Disperse":
+                if sub_mode == "Woven":
+                    # Woven (C열: json명)
+                    raw_name = str(row[2]).strip() if pd.notna(row[2]) else ""
+                else:
+                    # Interlock (B열: json명)
+                    raw_name = str(row[1]).strip() if pd.notna(row[1]) else ""
+                
+                # Woven, Interlock 공통 (D열: 보여질 표시명)
+                display_name = str(row[3]).strip() if len(row) > 3 and pd.notna(row[3]) else raw_name
+            else:
+                raw_name = str(row[1]).strip() if pd.notna(row[1]) else ""
+                display_name = str(row[2]).strip() if len(row) > 2 and pd.notna(row[2]) else raw_name
+
+            # 빈 값이면 넘김
+            if not raw_name or raw_name == 'nan':
+                continue
+
             if raw_name in _valid_keys:
                 mapping_list.append((raw_name, display_name))
                 disp_dict[raw_name] = display_name
@@ -297,8 +336,11 @@ def load_dye_mapping(mode, _valid_keys):
         return mapping_list, disp_dict, missing_dyes, sort_order_dict
     except Exception: return [(k, k) for k in sorted(list(_valid_keys))], {k: k for k in _valid_keys}, [], {}
 
-dye_db = load_dye_data(dye_mode)
-all_dyes_ordered, display_name_dict, missing_dyes, sort_order_dict = load_dye_mapping(dye_mode, dye_db.keys())
+# 현재 선택된 Disperse 서브 모드 (Interlock / Woven)를 가져옴
+disperse_sub_current = st.session_state.get("disperse_sub", "Interlock")
+
+dye_db = load_dye_data(dye_mode, disperse_sub_current)
+all_dyes_ordered, display_name_dict, missing_dyes, sort_order_dict = load_dye_mapping(dye_mode, disperse_sub_current, dye_db.keys())
 
 # --- 광원 가중치 데이터 (유지) ---
 wls_astm = np.arange(360, 790, 10)
@@ -421,10 +463,10 @@ def get_preview_hex(target_r_array, light_name):
     return hex_col, [int(RGB_viz[0]*255), int(RGB_viz[1]*255), int(RGB_viz[2]*255)]
 
 @st.cache_data
-def get_all_dye_hex_dict(dye_mode):
+def get_all_dye_hex_dict(dye_mode, sub_mode="Interlock"):
     hex_dict = {}
     try:
-        dye_data = load_dye_data(dye_mode)
+        dye_data = load_dye_data(dye_mode, sub_mode)
         for dye_name, conc_data in dye_data.items():
             available_concs = sorted([float(k) for k in conc_data.keys() if float(k) > 0])
             if not available_concs:
@@ -642,7 +684,7 @@ def confirm_disp_action():
     st.session_state.selected_dyes = []
     st.session_state.run_calc = False
 
-@st.dialog("백포 선택 (Disperse)") # 다이얼로그 타이틀은 번역 지원이 어려워 그대로 둡니다. (Streamlit 제약)
+@st.dialog("백포 선택 (Disperse)")
 def disperse_dialog():
     st.markdown(t("분산염료처방 탐색에 사용할 백포를 선택해주세요.", "Select substrate to use for disperse dye recipe."))
     if "temp_disp" not in st.session_state: 
@@ -651,12 +693,12 @@ def disperse_dialog():
     col1, col2 = st.columns(2)
     with col1: 
         st.button(
-            "Jersey", 
+            "Interlock", 
             use_container_width=True, 
-            type="primary" if st.session_state.temp_disp == "Jersey" else "secondary", 
+            type="primary" if st.session_state.temp_disp == "Interlock" else "secondary", 
             on_click=handle_disp_selection, 
-            args=("Jersey",), 
-            key="dlg_jersey_btn"
+            args=("Interlock",), 
+            key="dlg_interlock_btn"
         )
     with col2: 
         st.button(
@@ -676,7 +718,6 @@ def disperse_dialog():
 # ==========================================
 # 5. 상단 메뉴 및 좌측 사이드바 구성 
 # ==========================================
-# 드롭다운이 들어갈 마지막 컬럼의 넓이를 늘려줍니다.
 top_menu_cols = st.columns([1, 1, 1.2, 1, 1, 6, 0.2, 1.0]) 
 
 with top_menu_cols[0]:
@@ -705,9 +746,6 @@ with top_menu_cols[4]:
         set_dye_mode("Acid")
         st.rerun()
 
-# --- 5, 6번 인덱스 컬럼은 빈 공간 역할을 하므로 비워둡니다 ---
-
-# 언어 변환 드롭다운을 우측 끝(8번째 컬럼)에 배치
 with top_menu_cols[7]:
     lang_options = {
         "KO": "🌐 KOR", 
@@ -746,7 +784,7 @@ with st.sidebar:
     with col_clear:
         st.button(t("초기화", "Clear"), use_container_width=True, on_click=clear_search)
         
-    dye_hex_dict = get_all_dye_hex_dict(st.session_state.dye_mode)
+    dye_hex_dict = get_all_dye_hex_dict(st.session_state.dye_mode, st.session_state.get("disperse_sub", "Interlock"))
     filtered_dyes = []
     
     for raw_name, display_name in all_dyes_ordered:
@@ -795,16 +833,13 @@ with col_menu:
         st.markdown(f"<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>settings</span>{t('광원 설정', 'Light Source Settings', 'Cài đặt Nguồn sáng')}</strong>", unsafe_allow_html=True)
         light_options_all = ["D65", "A", "CWF (F02)", "TL84 (F11)", "TL83", "U3000 (F12)", "U3500", "LED35K", "LED_B1", "LED_T8G"]
         
-        # 내부 값을 '없음'으로 고정하고 리스트 구성
         light_options_optional = ["없음"] + light_options_all
         
-        # 화면 표시(UI)만 언어에 맞게 바꿔주는 포맷 함수
         def format_light(x):
             if x == "없음":
                 return t("없음", "None", "Không")
             return x
         
-        # 현재 세션 값 기준으로 기본 인덱스 설정
         idx1 = light_options_all.index(st.session_state.l1) if st.session_state.l1 in light_options_all else 0
         idx2 = light_options_optional.index(st.session_state.l2) if st.session_state.l2 in light_options_optional else light_options_optional.index("CWF (F02)")
         idx3 = light_options_optional.index(st.session_state.l3) if st.session_state.l3 in light_options_optional else 0
@@ -812,11 +847,8 @@ with col_menu:
         l_col1, l_col2, l_col3 = st.columns(3)
         light1_name = l_col1.selectbox(t("1차", "Primary", "Cấp 1"), light_options_all, key="l1", index=idx1)
         
-        # format_func를 추가하여 내부 값("없음")과 UI 표시("None", "Không")를 완벽히 분리
         light2_name = l_col2.selectbox(t("2차", "Secondary", "Cấp 2"), light_options_optional, key="l2", index=idx2, format_func=format_light) 
         light3_name = l_col3.selectbox(t("3차", "Tertiary", "Cấp 3"), light_options_optional, key="l3", index=idx3, format_func=format_light) 
-        
-        # (이전에 영문 None을 다시 원문으로 매핑하던 코드는 더 이상 필요 없으므로 삭제)
 
     with st.container(border=True):
         st.markdown(f"<strong style='display: flex; align-items: center; font-size: 16px;'><span class='material-symbols-outlined' style='margin-right:6px;'>folder_open</span>{t('데이터 입력 (QTX 또는 직접 측정)', 'Data Input (QTX or Direct Measure)')}</strong>", unsafe_allow_html=True)
