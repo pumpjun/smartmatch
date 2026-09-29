@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "ohyoung-msds-app",
+  "private_key_id": "83a2c20bc16076d8956c128ca3f6121c21173fd8",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrnu0TFHgj0eVe\nljz+x27zMC3Yp6FaNAt81G5KYW0ECk7QLodnlmtnnj++VVxCGUO2haxncWJsumXP\nP1V7b/p/xn4fHvhX2TPRxhVd44qPYGW5xNsyyB3pdIpJr1bsDAbTw2/Emyo1tfaK\nM5nkLjXMlyIcRBKzllRJM80XSWHEwVV/IFGwspPQLZg0VLTVKlF6zZmnXpUGEasE\nF4zYZK4fkdnJgn22Bti2xF+Fq/61s51vJY31U/zdX+AgIUTg9jsh6V00uL2tX2/X\n/ZJUx/6zZ9t574zVpzqHw8263g8BJdgyyv7AilHqZHgDxIiMfs+q9O9HHgSZJfRN\nzhDAMS3jAgMBAAECggEAE6mTJtb3Br+TBFm5JkWKICGadxKJiXCiCky6UBpGZ6qY\nqgBSshsJNidqzS8xcT88w0ogXP+gE63tYSez7v7+16nRpFYjhMkVR0jnBMk/hDq6\nnOSBapmD183q1BNbJZMhKxzejstqNBojY2UTEhH7RvPfzBY+gEXOZU6ihjL5mRWP\nQgGPdOB3bzyBIVAKtALIaPG955cwmBN36Ag6E21qLqLhHEzzRG9JhBFYeDGLimKQ\n5NHulwq50nv6dqztd3/B/xYr9DZlFXmYAnEXJZDMPg81w/3dzkAR5mKqQ6yCskqp\nmjX8UkgNaWz4fnl00OaHpqsvEHXrXc4mdTr8OkbndQKBgQDhiU5nOIt+HrhMwYbw\n9dVYDi3y+H6KCwUsyxuZZFdZTyriZXdKod84r+DPLR7VTmZqyYnrgE7aSA2mcQPK\ntNO12bUhPAwwFuxLvsDveF/75cvqd6gRKSA8r2C4T8Hn6fZUGhIOGVXDDVeVJw0G\nTeq3ovqqL9vSZfOn8F0jXKENTQKBgQDCzU383ZZGIoStDP28Xqi2rRvLhzPo18I3\n5vteIV9tdnmxZ8IMC1KI8yLB0ONct+oxw6sZf+cNGLHhOFmZLxxIDaQDKBIgy8SP\nRic4wMHkH3AivwXf8UQ2RgQtDS/QDbZLwmig/7PPVlihWeFQ5bLp6UxLNLeJ87qI\nHrnSvCdP7wKBgBjgqWpPXWuq/c9RpY3cwAy3e7AKYwLdFlQLj17LJ6ttRSC16oOr\n+VBqbhTMOFN1E20CEBmPDKOdQQwz+SQZ8CRmAEnLMtj3Hld4khWYJJZHkceqLTq/\nW5P2EGgkPBJVx1sdiRJPDxu11Axaw2AHpjVdX+L35np9znOe2tc0t3sdAoGBAIz/\npU895CNnoLjRCmdp7JwsuE2c0wnaAY4M9iyv4y6L7pFmFKI7H8ZYlfPLioX16OGU\nSyft2AM2uKnX66Jg4wuUM/7E5jouw1sg4ArIGo9P4g6ETXBGZaUTELq7LLxe8G/t\ni2XdLv0H9qbzM48mc1Wzs7FLuv1zGLSl6MKLxbipAoGABdTzogllrcv06G/6wKDD\nIByAW9bQ6kIe56VD6Hko2HdSFVOUJC3P3icztRxPHcHiTZ1o56F7uBKF6c7L7FgC\n1biVOZZEoRigoTmaWlu/vqUQU3QwXgTylBaFkJCmKUi+++0vV+UsC7mhFmEWHKIJ\nHbvWqSQ/Cmd5s3pQkj/j4Mg=\n-----END PRIVATE KEY-----\n",
+  "client_email": "smartmatch@ohyoung-msds-app.iam.gserviceaccount.com",
+  "client_id": "112273158747259691655",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/smartmatch%40ohyoung-msds-app.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
