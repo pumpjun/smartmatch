@@ -8,6 +8,7 @@ from scipy.optimize import minimize, nnls
 from scipy.interpolate import PchipInterpolator
 import base64
 import os
+import sys
 import re
 import pyperclip
 from datetime import datetime
@@ -20,7 +21,26 @@ import time
 import gspread
 from google.oauth2.service_account import Credentials
 
-st.set_page_config(layout="wide", initial_sidebar_state="expanded", page_title="SpectraMatch", page_icon="logo.png")
+
+# ==========================================
+# 🌟 EXE 빌드 및 하위 경로(data/) 관리를 위한 헬퍼 함수
+# ==========================================
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+# 앱 기본 설정 (data 폴더의 logo.png 사용)
+st.set_page_config(
+    layout="wide", 
+    initial_sidebar_state="expanded", 
+    page_title="SpectraMatch", 
+    page_icon=resource_path(os.path.join("data", "logo.png"))
+)
 
 # ==========================================
 # 🌐 다국어(한/영/베) 지원 설정
@@ -35,9 +55,10 @@ def t(ko_text, en_text, vi_text=None):
     if st.session_state.lang == "KO":
         return ko_text
     elif st.session_state.lang == "VI":
-        return vi_text if vi_text else en_text  # 베트남어 텍스트가 없으면 영어 출력
+        return vi_text if vi_text else en_text
     else:
         return en_text
+
 
 # ==========================================
 # 구글 시트 연결 및 조제표 자동 매칭 함수
@@ -56,8 +77,8 @@ def get_gspread_client():
     except Exception:
         pass
         
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    key_file_path = os.path.join(current_dir, "ohyoung-msds-app-83a2c20bc160.json")
+    # data 폴더에 있는 JSON 키 파일 사용
+    key_file_path = resource_path(os.path.join("data", "ohyoung-msds-app-83a2c20bc160.json"))
     creds = Credentials.from_service_account_file(key_file_path, scopes=scopes)
     return gspread.authorize(creds)
 
@@ -147,6 +168,7 @@ def save_to_google_sheet(result_data, active_batches, selected_raw_dyes, display
         st.error(t(f"구글 시트 저장 중 오류가 발생했습니다: {e}", f"Error saving to Google Sheets: {e}"), icon=":material/error:")
         return False
 
+
 # ==========================================
 # 🌟 신규: Datacolor 시리얼 통신 측정 함수
 # ==========================================
@@ -179,21 +201,20 @@ def measure_datacolor():
         st.error(t(f"기기 연결 오류: {e}", f"Device connection error: {e}"))
     return None
 
+
 # ==========================================
-# 🌟 1. 데이터 로드
+# 🌟 1. 데이터 로드 (data 폴더 참조 적용)
 # ==========================================
 @st.cache_data(ttl=60)
 def load_correction_factors():
     try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(current_dir, "correction.json")
+        file_path = resource_path(os.path.join("data", "correction.json"))
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception:
         return {} 
 
 if "dye_mode" not in st.session_state: st.session_state.dye_mode = "Reactive"
-# Jersey를 Interlock으로 변경
 if "disperse_sub" not in st.session_state: st.session_state.disperse_sub = "Interlock"
 if "selected_dyes" not in st.session_state: st.session_state.selected_dyes = []
 if "run_calc" not in st.session_state: st.session_state.run_calc = False
@@ -223,11 +244,13 @@ def clear_dyes():
 
 dye_mode = st.session_state.dye_mode
 
+
 # ==========================================
 # 2. 공통 UI 스타일 및 상단 고정 헤더 구성 
 # ==========================================
 try:
-    with open("logo.png", "rb") as image_file:
+    logo_path = resource_path(os.path.join("data", "logo.png"))
+    with open(logo_path, "rb") as image_file:
         logo_base64 = base64.b64encode(image_file.read()).decode()
 except Exception:
     logo_base64 = ""
@@ -262,8 +285,9 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+
 # ==========================================
-# 3. 데이터 로드 및 매핑 (Woven, Interlock 구분 로직 적용)
+# 3. 데이터 로드 및 매핑 
 # ==========================================
 def apply_dc_correction(light_name, de_val):
     if "TL84" in light_name:
@@ -275,7 +299,7 @@ def apply_dc_correction(light_name, de_val):
 def load_dye_data(mode, sub_mode="Interlock"):
     file_map = {
         "Reactive": 'dye_data.json', 
-        "Disperse": 'dye_data_disperse.json', # Disperse - Interlock 기본 파일
+        "Disperse": 'dye_data_disperse.json', 
         "Reactive (CPB)": 'dye_data_cpb.json', 
         "CDP": 'dye_data_CDP.json', 
         "Acid": 'dye_data_acid.json'
@@ -283,12 +307,13 @@ def load_dye_data(mode, sub_mode="Interlock"):
     
     json_file = file_map.get(mode, 'dye_data.json')
     
-    # Disperse 모드이면서 Woven 백포를 선택한 경우
     if mode == "Disperse" and sub_mode == "Woven":
         json_file = 'dye_data_woven.json'
 
+    target_path = resource_path(os.path.join("data", json_file))
+
     try:
-        with open(json_file, 'r', encoding='utf-8') as f:
+        with open(target_path, 'r', encoding='utf-8') as f:
             raw_data = json.load(f)
             return {name.strip(): concs for name, concs in raw_data.items() if len(concs) > 0}
     except Exception: 
@@ -303,8 +328,12 @@ def load_dye_mapping(mode, sub_mode, _valid_keys):
         "CDP": 'CDP_dye_list.xlsx', 
         "Acid": 'acid_dye_list.xlsx'
     }
+    
+    excel_file = file_map.get(mode, 'dye_list.xlsx')
+    target_path = resource_path(os.path.join("data", excel_file))
+    
     try:
-        df = pd.read_excel(file_map.get(mode, 'dye_list.xlsx'), header=None)
+        df = pd.read_excel(target_path, header=None)
         mapping_list, disp_dict, missing_dyes, sort_order_dict = [], {}, [], {}
         for _, row in df.iterrows():
             try: sort_val = float(row[0]) if pd.notna(row[0]) else 999.0
@@ -312,19 +341,15 @@ def load_dye_mapping(mode, sub_mode, _valid_keys):
             
             if mode == "Disperse":
                 if sub_mode == "Woven":
-                    # Woven (C열: json명)
                     raw_name = str(row[2]).strip() if pd.notna(row[2]) else ""
                 else:
-                    # Interlock (B열: json명)
                     raw_name = str(row[1]).strip() if pd.notna(row[1]) else ""
                 
-                # Woven, Interlock 공통 (D열: 보여질 표시명)
                 display_name = str(row[3]).strip() if len(row) > 3 and pd.notna(row[3]) else raw_name
             else:
                 raw_name = str(row[1]).strip() if pd.notna(row[1]) else ""
                 display_name = str(row[2]).strip() if len(row) > 2 and pd.notna(row[2]) else raw_name
 
-            # 빈 값이면 넘김
             if not raw_name or raw_name == 'nan':
                 continue
 
@@ -334,9 +359,9 @@ def load_dye_mapping(mode, sub_mode, _valid_keys):
                 sort_order_dict[raw_name] = sort_val
             else: missing_dyes.append(raw_name)
         return mapping_list, disp_dict, missing_dyes, sort_order_dict
-    except Exception: return [(k, k) for k in sorted(list(_valid_keys))], {k: k for k in _valid_keys}, [], {}
+    except Exception: 
+        return [(k, k) for k in sorted(list(_valid_keys))], {k: k for k in _valid_keys}, [], {}
 
-# 현재 선택된 Disperse 서브 모드 (Interlock / Woven)를 가져옴
 disperse_sub_current = st.session_state.get("disperse_sub", "Interlock")
 
 dye_db = load_dye_data(dye_mode, disperse_sub_current)
@@ -432,6 +457,7 @@ def get_ks(reflectance): return (1 - reflectance)**2 / (2 * reflectance)
 blank_r_str_reactive = "61.487896,64.536758,67.636276,70.483246,73.516251,75.622711,77.759293,79.583626,80.990044,82.235336,83.458176,84.331772,85.404106,86.164101,86.926323,87.612724,88.086739,88.541801,88.927353,89.348244,89.645943,89.882187,90.113014,90.397278,90.583130,90.746536,90.858932,91.020134,91.199127,91.403587,91.537102,91.670677,91.884819,91.980095,92.083275"
 blank_r_reactive = np.array([float(x.strip()) / 100.0 for x in blank_r_str_reactive.split(',') if x.strip()])
 blank_ks = get_ks(blank_r_reactive) 
+
 
 # ==========================================
 # 4. 파싱 및 계산 로직
@@ -715,6 +741,7 @@ def disperse_dialog():
         confirm_disp_action()
         st.rerun()
 
+
 # ==========================================
 # 5. 상단 메뉴 및 좌측 사이드바 구성 
 # ==========================================
@@ -820,6 +847,7 @@ with st.sidebar:
         with col_btn:
             st.button(display_name, key=f"dye_{raw_name}_{idx}", use_container_width=True, type=btn_type, on_click=toggle_dye, args=(raw_name,))
 
+
 # ------------------------------------------
 # 🌟 메인 화면 구성
 # ------------------------------------------
@@ -924,6 +952,7 @@ with col_menu:
                 st.warning(t("사이드바에서 처방에 사용된 염료를 선택해 주세요.", "Select dyes used in the recipe from the sidebar."), icon=":material/warning:")
             st.session_state.run_calc = False
 
+
 # =======================================================
 # 📌 [중앙] 2. 색상 좌표(그래프) 및 Delta 데이터 표 
 # =======================================================
@@ -1022,6 +1051,7 @@ with col_graph:
                 
                 st.markdown(f"<div style='display: flex; align-items: center;'><span class='material-symbols-outlined' style='margin-right:4px; font-size: 18px;'>arrow_right</span> <b>{b['name']}</b></div>", unsafe_allow_html=True)
                 st.dataframe(pd.DataFrame(batch_records), hide_index=True, use_container_width=True)
+
 
 # =======================================================
 # 📌 [우측] 3. 역산 분석 및 보정 추천 처방
