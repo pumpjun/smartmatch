@@ -498,16 +498,23 @@ def get_all_dye_hex_dict(dye_mode, sub_mode="Interlock"):
             if not available_concs:
                 hex_dict[dye_name] = "#FFFFFF"
                 continue
+                
             max_c_key = [k for k in conc_data.keys() if float(k) == available_concs[-1]][0]
             spectrum_map = conc_data[max_c_key]
             target_wls = np.arange(400, 710, 10)
             sorted_items = sorted(spectrum_map.items(), key=lambda x: int(x[0]))
             existing_wls = np.array([int(k) for k, v in sorted_items])
+            
+            # 🚨 원인 해결: DB의 스펙트럼 값이 0~100 스케일인 경우 0~1 스케일로 변환
             existing_vals = np.array([float(v) for k, v in sorted_items])
+            if np.max(existing_vals) > 1.5:
+                existing_vals = existing_vals / 100.0
+                
             r_array_31 = np.interp(target_wls, existing_wls, existing_vals)
             hex_col, _ = get_preview_hex(r_array_31, "D65")
             hex_dict[dye_name] = hex_col
-    except Exception: pass
+    except Exception as e: 
+        pass
     return hex_dict
 
 def parse_qtx_blocks(content):
